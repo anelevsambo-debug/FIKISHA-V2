@@ -9,7 +9,7 @@
 | Unit tests | VERIFIED IN TEST ENVIRONMENT | GitHub Actions run #119: 38 passed, 0 failed, 0 skipped on Node.js 24; tests use fake platform interfaces. |
 | Sheets adapter | IMPLEMENTED, NOT VERIFIED | Fake Sheets tests cover reservation and duplicate protection; no live workbook or real concurrent lock test. |
 | Create/transition recovery | IMPLEMENTED, NOT VERIFIED | Simulated partial-write tests pass; actual Apps Script/Google Sheets behavior remains unverified. |
-| Company provisioning | NOT STARTED | No actual end-to-end provisioning pipeline verified. |
+| Company provisioning | IMPLEMENTED, NOT VERIFIED | Resource discovery, identity markers and provisioning-job persistence are unit-tested; no live resources or end-to-end Google run. |
 | AppSheet apps | NOT STARTED | No apps created or tested. |
 | Live tenant isolation | BLOCKED | Requires separate real accounts and workbooks. |
 | Meta outbound adapter | IMPLEMENTED, NOT VERIFIED | Fake HTTP client only; no credentials or live API test. |
