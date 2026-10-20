@@ -20,7 +20,12 @@ function resolveTenantResources(companyId, actor, deps) {
     throw new FikishaError("TENANT_ACCESS_DENIED");
   }
 
-  var company = deps.platformStore.getCompany(companyId.trim());
+  var company;
+  try {
+    company = deps.platformStore.getCompany(companyId.trim());
+  } catch (error) {
+    throw new FikishaError("COMPANY_REGISTRY_UNAVAILABLE");
+  }
   if (!company) throw new FikishaError("COMPANY_NOT_FOUND");
   if (company.company_id !== companyId.trim()) throw new FikishaError("COMPANY_REGISTRY_BINDING_MISMATCH");
   if (company.status !== "ACTIVE") throw new FikishaError("COMPANY_NOT_ACTIVE");
@@ -31,19 +36,36 @@ function resolveTenantResources(companyId, actor, deps) {
 
   var expectedFolderMarker = "FIKISHA-V2|company_id=" + company.company_id + "|resource=operations-folder";
   var expectedWorkbookMarker = "FIKISHA-V2|company_id=" + company.company_id + "|resource=operations-workbook";
-  var folder = deps.getFolderById(company.drive_folder_id);
-  if (!folder || folder.getId() !== company.drive_folder_id ||
-      folder.getDescription() !== expectedFolderMarker) {
-    throw new FikishaError("TENANT_FOLDER_BINDING_MISMATCH");
+  var folder;
+  try {
+    folder = deps.getFolderById(company.drive_folder_id);
+    if (!folder || folder.getId() !== company.drive_folder_id ||
+        folder.getDescription() !== expectedFolderMarker) {
+      throw new FikishaError("TENANT_FOLDER_BINDING_MISMATCH");
+    }
+  } catch (error) {
+    if (error && error.code === "TENANT_FOLDER_BINDING_MISMATCH") throw error;
+    throw new FikishaError("TENANT_FOLDER_BINDING_UNAVAILABLE");
   }
 
-  var workbookFile = deps.getFileById(company.workbook_id);
-  if (!workbookFile || workbookFile.getId() !== company.workbook_id ||
-      workbookFile.getDescription() !== expectedWorkbookMarker) {
-    throw new FikishaError("TENANT_WORKBOOK_BINDING_MISMATCH");
+  var workbookFile;
+  try {
+    workbookFile = deps.getFileById(company.workbook_id);
+    if (!workbookFile || workbookFile.getId() !== company.workbook_id ||
+        workbookFile.getDescription() !== expectedWorkbookMarker) {
+      throw new FikishaError("TENANT_WORKBOOK_BINDING_MISMATCH");
+    }
+  } catch (error) {
+    if (error && error.code === "TENANT_WORKBOOK_BINDING_MISMATCH") throw error;
+    throw new FikishaError("TENANT_WORKBOOK_BINDING_UNAVAILABLE");
   }
 
-  var workbook = deps.openWorkbookById(company.workbook_id);
+  var workbook;
+  try {
+    workbook = deps.openWorkbookById(company.workbook_id);
+  } catch (error) {
+    throw new FikishaError("TENANT_WORKBOOK_UNAVAILABLE");
+  }
   if (!workbook || typeof workbook.getId !== "function" || workbook.getId() !== company.workbook_id) {
     throw new FikishaError("TENANT_WORKBOOK_BINDING_MISMATCH");
   }
@@ -61,7 +83,12 @@ function resolveTenantResources(companyId, actor, deps) {
     throw new FikishaError("COMPANY_SCHEMA_VERSION_MISMATCH");
   }
 
-  var store = deps.createStore(company.workbook_id);
+  var store;
+  try {
+    store = deps.createStore(company.workbook_id);
+  } catch (error) {
+    throw new FikishaError("TENANT_STORE_BINDING_FAILED");
+  }
   if (!store) throw new FikishaError("TENANT_STORE_BINDING_FAILED");
   return makeTenantContext(company, workbook, folder, store);
 }
