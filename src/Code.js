@@ -1,0 +1,2 @@
+function doGet(e){return ContentService.createTextOutput(JSON.stringify({service:"FIKISHA-V2",status:"configured",liveWhatsApp:false})).setMimeType(ContentService.MimeType.JSON);}function doPost(e){return ContentService.createTextOutput(JSON.stringify({ok:false,code:"WEBHOOK_NOT_CONFIGURED"})).setMimeType(ContentService.MimeType.JSON);}
+// Placeholder only: do not deploy as a live WhatsApp webhook.
