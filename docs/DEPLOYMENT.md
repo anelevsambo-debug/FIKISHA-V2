@@ -24,4 +24,4 @@ No Google Apps Script deployment, workbook provisioning, AppSheet creation, or l
 10. Test backup restoration and rollback before considering a pilot.
 
 ## Deployment limitation
-The repository does not yet contain a verified, reproducible Apps Script bundle or authenticated web endpoint. Copying the current files into Apps Script will not create a complete usable service. Deployment remains blocked until the missing runtime wiring and security gates are implemented.
+The repository does not yet contain a verified, reproducible Apps Script bundle or authenticated web endpoint. Retry-safe Drive/workbook provisioning primitives exist but have not been run against a real Google account. Copying the current files into Apps Script will not create a complete usable service. Deployment remains blocked until runtime wiring and security gates are implemented.
