@@ -367,3 +367,33 @@ This is a policy approval only. FVK-04 remains **BLOCKED** until enforcement is 
 - Candidate deliberately does not expose a webhook endpoint. Existing `src/Code.js` remains fail-closed; `doPost` remains disabled.
 
 **Critical limitations:** the signature verifier, consent ledger, durable provider-event store, provider sender, secret management and live HTTPS gateway are injected interfaces and are not wired to actual services. Google Sheets workbook schema does not yet include a dedicated provider-event ledger. The outbox candidate is not yet integrated end-to-end with this module. Unit tests cannot prove atomic uniqueness, send/opt-out race prevention, exact-byte preservation, provider status semantics, or Apps Script/Google behavior. Therefore FVK-04, FVK-06 and FVK-17 remain open, and live messaging remains NO-GO. No credentials, real recipient data or messages were used.
+
+
+## AppSheet role interfaces and source security — 2026-10-20
+
+**Task:** FVK-APP-SEC-01  
+**Branch:** build/appsheet-role-source-security  
+**Status:** DESIGN AND SYNTHETIC CONTRACT TESTS ADDED; CI RESULT MUST BE VERIFIED ON THE EXACT HEAD; NO LIVE GOOGLE VERIFICATION.
+
+### Repository-grounded findings
+
+- src/core/permissions.js defines role-to-action allow-lists and tenant-context checks. These are backend helpers, not AppSheet configuration and not proof of a trusted live identity.
+- The current architecture says there is no authenticated operational request-to-actor path. src/Code.js remains fail-closed and doPost returns WEBHOOK_NOT_CONFIGURED.
+- Company workbook schema includes deliveries, delivery events, drivers/offers, notification outbox, proof challenges and proof evidence. Driver/evidence scoping therefore must cover every related table and file, not only the main Deliveries view.
+- Existing project decisions require separate company workbooks and server-side membership checks. AppSheet apps, filters, Google ACLs, source access and licences have not been live configured or tested.
+
+### Candidate documentation and tests
+
+- Added docs/APPSHEET_ROLE_SOURCE_SECURITY.md: role-to-record/action matrix for platform administrator, company administrator, dispatcher and driver; conservative separate-app/source topology; AppSheet sign-in/security-filter/source-mode checklist; direct source access test matrix; CI-vs-live verification distinction; and release gate.
+- Added tests/unit/appsheet-security-contract.test.js: synthetic tests of existing permission allow-lists, Company A/Company B tenant denial in both directions, inactive/missing/developer actor rejection, no platform-admin authority from company role helpers, and required design-gate wording.
+- This change does not create an AppSheet app, alter Google permissions, add live filters, or activate an operational endpoint.
+
+### Important limitations
+
+The new tests exercise the existing JavaScript helper contract and static design requirements only. They do not prove that AppSheet expressions are correct, that USEREMAIL() maps to a trusted registry identity, that app creator mode cannot expose unintended data, that Sheets/Drive ACLs are correct, or that direct URLs/exports/offline cache are safe. The current backend identity boundary remains blocked; privileged AppSheet writes must stay disabled until a supported authenticated invocation path is implemented and verified.
+
+### Required real Google test evidence
+
+Use controlled synthetic identities for platform admin, Company A admin/dispatcher/driver and Company B admin/dispatcher/driver. Test app allow-list and sign-in, sync/search/deep links, cross-company row access, assigned-driver-only access, direct Sheets/Drive open/export/file-ID access, restricted evidence access, app access revocation, account switching, offline cache, automation identity, and direct source permissions. Preserve redacted evidence and test date without adding secrets or real customer data to the repository.
+
+**Finding status:** FVK-01 remains open because trusted identity/entrypoint is not verified. FVK-02 remains blocked for live tenant/source isolation. FVK-APP-SEC-01 is IN PROGRESS / NOT LIVE VERIFIED. Launch remains NO-GO. No app publication, licence purchase, deployment, or Google permission change is authorized.
