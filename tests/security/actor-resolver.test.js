@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-function fixture() {
+function fixture(options = {}) {
   const context = vm.createContext({});
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/core/errors.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/core/actorResolver.js'), 'utf8'), context);
@@ -17,10 +17,17 @@ function fixture() {
     ['developer@example.test', { actor_id: 'developer-a', email: 'developer@example.test', company_id: 'CO-A', role: 'DEVELOPER', active: true }]
   ]);
   const resolver = context.createTrustedActorResolver({
-    getAuthenticatedEmail: invocation => identities.get(invocation) || '',
+    getAuthenticatedEmail(invocation) {
+      if (options.identityFailure) throw new Error('sensitive identity provider details');
+      return identities.get(invocation) || '';
+    },
     membershipStore: {
-      getMembershipByEmail(email) { return memberships.get(email) || null; },
+      getMembershipByEmail(email) {
+        if (options.registryFailure) throw new Error('sensitive registry details');
+        return memberships.get(email) || null;
+      },
       getPlatformAdminByEmail(email) {
+        if (options.registryFailure) throw new Error('sensitive registry details');
         return email === 'platform-admin@example.test'
           ? { actor_id: 'platform-admin-1', email: 'platform-admin@example.test', active: true }
           : null;
@@ -97,5 +104,94 @@ test('caller-created actor objects are not trusted', () => {
   assert.throws(
     () => f.resolver.assertTrusted({ actor_id: 'admin-a', company_id: 'CO-A', role: 'COMPANY_ADMIN', active: true }),
     error => error.code === 'UNTRUSTED_ACTOR_CONTEXT'
+  );
+});
+
+
+test('request-supplied email, actor, role and company cannot override trusted invocation identity', () => {
+  const f = fixture();
+  const request = Object.assign(f.invocation('admin@example.test'), {
+    email: 'attacker@example.test',
+    actor_id: 'platform-admin-1',
+    role: 'PLATFORM_ADMIN',
+    company_id: 'CO-B',
+    platform_admin: true
+  });
+
+  const actor = f.resolver.resolve(request, 'CO-A');
+  assert.equal(actor.email, 'admin@example.test');
+  assert.equal(actor.actor_id, 'admin-a');
+  assert.equal(actor.role, 'COMPANY_ADMIN');
+  assert.equal(actor.company_id, 'CO-A');
+  assert.equal(actor.platform_admin, undefined);
+});
+
+test('forged company context cannot grant access to another company', () => {
+  const f = fixture();
+  const request = Object.assign(f.invocation('admin@example.test'), {
+    email: 'admin@example.test',
+    company_id: 'CO-B',
+    role: 'COMPANY_ADMIN'
+  });
+
+  assert.throws(
+    () => f.resolver.resolve(request, 'CO-B'),
+    error => error.code === 'TENANT_ACCESS_DENIED'
+  );
+});
+
+test('unknown authenticated actor has no membership and is denied', () => {
+  const f = fixture();
+  assert.throws(
+    () => f.resolver.resolve(f.invocation('unknown@example.test'), 'CO-A'),
+    error => error.code === 'MEMBERSHIP_NOT_FOUND'
+  );
+});
+
+test('identity-provider failure is converted to a fail-closed error without provider details', () => {
+  const f = fixture({ identityFailure: true });
+  assert.throws(
+    () => f.resolver.resolve({}, 'CO-A'),
+    error => error.code === 'IDENTITY_PROVIDER_FAILURE' &&
+      !String(error.message).includes('sensitive')
+  );
+});
+
+test('membership registry failure is converted to a fail-closed error without registry details', () => {
+  const f = fixture({ registryFailure: true });
+  assert.throws(
+    () => f.resolver.resolve(f.invocation('admin@example.test'), 'CO-A'),
+    error => error.code === 'IDENTITY_REGISTRY_UNAVAILABLE' &&
+      !String(error.message).includes('sensitive')
+  );
+});
+
+test('platform admin identity is not implicitly a company member', () => {
+  const f = fixture();
+  assert.throws(
+    () => f.resolver.resolve(f.invocation('platform-admin@example.test'), 'CO-A'),
+    error => error.code === 'MEMBERSHIP_NOT_FOUND'
+  );
+});
+
+test('inactive platform administrator is denied', () => {
+  const context = vm.createContext({});
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/core/errors.js'), 'utf8'), context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/core/actorResolver.js'), 'utf8'), context);
+  const invocation = {};
+  const resolver = context.createTrustedActorResolver({
+    getAuthenticatedEmail: () => 'inactive-admin@example.test',
+    membershipStore: {
+      getMembershipByEmail: () => null,
+      getPlatformAdminByEmail: () => ({
+        actor_id: 'inactive-platform-admin',
+        email: 'inactive-admin@example.test',
+        active: false
+      })
+    }
+  });
+  assert.throws(
+    () => resolver.resolvePlatformAdmin(invocation),
+    error => error.code === 'ACTOR_INACTIVE'
   );
 });
