@@ -492,3 +492,58 @@ test('replaying an expired offer request does not reopen the old offer', () => {
   assert.equal(replay.status, 'EXPIRED');
   assert.equal(f.db.deliveries.get(pending.delivery_id).status, 'DISPATCH_PENDING');
 });
+
+
+test('retry recovers a persisted offer when the lifecycle transition initially fails', () => {
+  const f = fixture();
+  const pending = prepareDispatch(f, 'offer-partial-create');
+  const originalTransition = f.service.transition;
+  let failOnce = true;
+  f.service.transition = function (args, actor) {
+    if (args.action === 'OFFER_TO_DRIVER' && failOnce) {
+      failOnce = false;
+      throw Object.assign(new Error('simulated interruption'), { code: 'SIMULATED_TRANSITION_INTERRUPTION' });
+    }
+    return originalTransition(args, actor);
+  };
+  const request = { delivery_id: pending.delivery_id, driver_id: 'driver', idempotency_key: 'offer-partial' };
+  assert.throws(() => f.dispatchService.createOffer(request, f.dispatcher),
+    error => error.code === 'SIMULATED_TRANSITION_INTERRUPTION');
+  assert.equal(f.db.offers.size, 1);
+  assert.equal(f.db.deliveries.get(pending.delivery_id).status, 'DISPATCH_PENDING');
+
+  const recovered = f.dispatchService.createOffer(request, f.dispatcher);
+  assert.equal(recovered.status, 'OFFERED');
+  assert.equal(f.db.deliveries.get(pending.delivery_id).status, 'OFFER_SENT');
+  assert.equal(f.db.offers.size, 1);
+  assert.equal(f.db.outbox.get('driver-offer:' + recovered.offer_id).status, 'PENDING');
+});
+
+test('retry repairs offer status when assignment committed before offer record update failed', () => {
+  const f = fixture();
+  const pending = prepareDispatch(f, 'offer-partial-accept');
+  const offer = f.dispatchService.createOffer({
+    delivery_id: pending.delivery_id, driver_id: 'driver', idempotency_key: 'offer-partial-accept'
+  }, f.dispatcher);
+  const originalUpdate = f.store.updateOffer.bind(f.store);
+  let failOnce = true;
+  f.store.updateOffer = function (value, expectedStatus) {
+    if (value.status === 'ACCEPTED' && failOnce) {
+      failOnce = false;
+      throw Object.assign(new Error('simulated registry write interruption'), { code: 'SIMULATED_OFFER_UPDATE_FAILURE' });
+    }
+    return originalUpdate(value, expectedStatus);
+  };
+  assert.throws(() => f.dispatchService.respond({
+    offer_id: offer.offer_id, response: 'ACCEPT', idempotency_key: 'first-accept'
+  }, f.driver), error => error.code === 'SIMULATED_OFFER_UPDATE_FAILURE');
+  assert.equal(f.db.deliveries.get(pending.delivery_id).status, 'ASSIGNED');
+  assert.equal(f.db.offers.get(offer.offer_id).status, 'OFFERED');
+
+  const recovered = f.dispatchService.respond({
+    offer_id: offer.offer_id, response: 'ACCEPT', idempotency_key: 'retry-accept'
+  }, f.driver);
+  assert.equal(recovered.status, 'ASSIGNED');
+  assert.equal(f.db.offers.get(offer.offer_id).status, 'ACCEPTED');
+  assert.equal(f.db.deliveries.get(pending.delivery_id).version, 5);
+});
