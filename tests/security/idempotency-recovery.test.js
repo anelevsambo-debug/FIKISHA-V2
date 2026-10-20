@@ -13,7 +13,9 @@ function fixture() {
 
   const db = { deliveries: new Map(), events: [], idempotency: new Map() };
   let failNextEvent = false;
+  let exclusiveCalls = 0;
   const store = {
+    runExclusive(work) { exclusiveCalls += 1; return work(); },
     getDelivery: id => db.deliveries.get(id) || null,
     getIdempotency: key => db.idempotency.get(key) || null,
     reserveIdempotency(key, candidate) {
@@ -78,6 +80,7 @@ function fixture() {
     service,
     actor,
     failNextEventOnce() { failNextEvent = true; },
+    exclusiveCalls: () => exclusiveCalls,
     input: {
       sender_name: 'Sender',
       sender_phone: '+26770000001',
@@ -219,4 +222,22 @@ test('same create idempotency key with a different payload is rejected', () => {
   );
   assert.equal(f.db.deliveries.size, 1);
   assert.equal(f.db.events.length, 1);
+});
+
+
+test('delivery create and transition delegate the whole operation to the exclusive store boundary', () => {
+  const f = fixture();
+  const delivery = f.service.create(f.input, f.actor, 'exclusive-create');
+  assert.equal(f.exclusiveCalls(), 1);
+
+  f.db.deliveries.set(delivery.delivery_id, Object.assign({}, delivery, {
+    status: 'READY_FOR_QUOTE',
+    version: 1
+  }));
+  f.service.transition({
+    delivery_id: delivery.delivery_id,
+    action: 'ISSUE_QUOTE',
+    idempotency_key: 'exclusive-transition'
+  }, f.actor);
+  assert.equal(f.exclusiveCalls(), 2);
 });
