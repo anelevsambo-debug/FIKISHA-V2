@@ -11,9 +11,10 @@ for (const file of ['errors.js', 'ids.js', 'validators.js', 'permissions.js', 's
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/deliveries/service.js'), 'utf8'), c);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/deliveries/dispatchService.js'), 'utf8'), c);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/notifications/outboxService.js'), 'utf8'), c);
+vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/deliveries/proofOfDeliveryService.js'), 'utf8'), c);
 
 function fixture() {
-  const db = { deliveries: new Map(), events: [], keys: new Map(), proofs: new Set(), drivers: new Set(), offers: new Map(), outbox: new Map() };
+  const db = { deliveries: new Map(), events: [], keys: new Map(), proofs: new Set(), proofRecords: new Map(), challenges: new Map(), proofEvidence: new Map(), driveFiles: new Map(), drivers: new Set(), offers: new Map(), outbox: new Map() };
   let nowMs = Date.parse('2026-10-20T00:00:00Z');
   const store = {
     runExclusive: work => work(),
@@ -101,7 +102,61 @@ function fixture() {
       if (!db.keys.has(key)) throw Object.assign(new Error('reservation missing'), { code: 'IDEMPOTENCY_RESERVATION_MISSING' });
       db.keys.set(key, record);
     },
-    isProofVerified: (proof, delivery, company) => db.proofs.has([proof, delivery, company].join(':')),
+    isProofVerified: (proof, delivery, company) => {
+      if (db.proofs.has([proof, delivery, company].join(':'))) return true;
+      const record = db.proofRecords.get(proof);
+      if (!record || record.delivery_id !== delivery || record.company_id !== company || record.verified !== true) return false;
+      const challenge = db.challenges.get(record.challenge_id);
+      if (!challenge || challenge.proof_id !== proof || !['COMPLETING', 'CONSUMED'].includes(challenge.status)) return false;
+      const ids = JSON.parse(challenge.evidence_ids_json || '[]');
+      return ids.length > 0 && ids.every(id => {
+        const evidence = db.proofEvidence.get(id);
+        return evidence && evidence.delivery_id === delivery && evidence.company_id === company &&
+          evidence.challenge_id === challenge.challenge_id && evidence.verified === true;
+      }) && ids.some(id => db.proofEvidence.get(id).evidence_type === 'DELIVERY_PHOTO');
+    },
+    getChallenge: id => db.challenges.has(id) ? Object.assign({}, db.challenges.get(id)) : null,
+    listChallengesForDelivery: id => Array.from(db.challenges.values()).filter(x => x.delivery_id === id).map(x => Object.assign({}, x)),
+    createChallenge(challenge) {
+      if (db.challenges.has(challenge.challenge_id)) throw Object.assign(new Error('duplicate challenge'), { code: 'PROOF_CHALLENGE_ID_CONFLICT' });
+      db.challenges.set(challenge.challenge_id, Object.assign({}, challenge));
+      return challenge;
+    },
+    updateChallenge(challenge, expectedStatus) {
+      const prior = db.challenges.get(challenge.challenge_id);
+      if (!prior) throw Object.assign(new Error('missing challenge'), { code: 'PROOF_CHALLENGE_NOT_FOUND' });
+      if (expectedStatus && prior.status !== expectedStatus) throw Object.assign(new Error('challenge status conflict'), { code: 'PROOF_CHALLENGE_STATUS_CONFLICT' });
+      if (prior.delivery_id !== challenge.delivery_id || prior.company_id !== challenge.company_id) throw Object.assign(new Error('binding conflict'), { code: 'PROOF_CHALLENGE_BINDING_CONFLICT' });
+      db.challenges.set(challenge.challenge_id, Object.assign({}, challenge));
+      return challenge;
+    },
+    invalidateChallenge(id, reason, at) {
+      const prior = db.challenges.get(id);
+      if (!prior) throw Object.assign(new Error('missing challenge'), { code: 'PROOF_CHALLENGE_NOT_FOUND' });
+      if (prior.status === 'COMPLETING') throw Object.assign(new Error('recovery required'), { code: 'PROOF_COMPLETION_RECOVERY_REQUIRED' });
+      if (['CONSUMED', 'INVALIDATED'].includes(prior.status)) return prior;
+      return this.updateChallenge(Object.assign({}, prior, { status: 'INVALIDATED', invalidation_reason: reason, invalidated_at: at, updated_at: at }), 'ACTIVE');
+    },
+    registerProofEvidence(evidence) {
+      const prior = db.proofEvidence.get(evidence.evidence_id);
+      if (prior) {
+        if (prior.drive_file_id !== evidence.drive_file_id || prior.delivery_id !== evidence.delivery_id || prior.company_id !== evidence.company_id) throw Object.assign(new Error('evidence conflict'), { code: 'PROOF_EVIDENCE_ID_CONFLICT' });
+        return prior;
+      }
+      if (Array.from(db.proofEvidence.values()).some(x => x.drive_file_id === evidence.drive_file_id && x.delivery_id !== evidence.delivery_id)) throw Object.assign(new Error('evidence reuse'), { code: 'DRIVE_EVIDENCE_REUSE_DENIED' });
+      db.proofEvidence.set(evidence.evidence_id, Object.assign({}, evidence));
+      return evidence;
+    },
+    getProofEvidence: id => db.proofEvidence.has(id) ? Object.assign({}, db.proofEvidence.get(id)) : null,
+    listProofEvidence: id => Array.from(db.proofEvidence.values()).filter(x => x.delivery_id === id),
+    createProofRecord(proof) {
+      const prior = db.proofRecords.get(proof.proof_id);
+      if (prior && (prior.delivery_id !== proof.delivery_id || prior.company_id !== proof.company_id)) throw Object.assign(new Error('proof conflict'), { code: 'PROOF_RECORD_CONFLICT' });
+      if (!prior) db.proofRecords.set(proof.proof_id, Object.assign({}, proof));
+      db.proofs.add([proof.proof_id, proof.delivery_id, proof.company_id].join(':'));
+      return prior || proof;
+    },
+    getProofRecord: id => db.proofRecords.has(id) ? Object.assign({}, db.proofRecords.get(id)) : null,
     isActiveDriver: (id, company) => db.drivers.has([id, company].join(':'))
   };
 
@@ -148,6 +203,8 @@ function fixture() {
     service,
     dispatchService,
     outboxService,
+    actorResolver,
+    identities,
     actor: actorResolver.resolve(invocation('admin-a@example.test'), 'CO-A'),
     otherActor: actorResolver.resolve(invocation('other@example.test'), 'CO-B'),
     driver: actorResolver.resolve(invocation('driver@example.test'), 'CO-A'),
