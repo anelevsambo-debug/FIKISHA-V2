@@ -159,3 +159,44 @@ test('caller-created actor object cannot create a delivery', () => {
     error => error.code === 'UNTRUSTED_ACTOR_CONTEXT'
   );
 });
+
+test('Company B cannot transition or mutate Company A delivery through a foreign ID', () => {
+  const f = fixture();
+  const delivery = f.service.create(f.input, f.actor, 'tenant-bound-create');
+  const before = Object.assign({}, f.db.deliveries.get(delivery.delivery_id));
+  const eventCount = f.db.events.length;
+
+  assert.throws(
+    () => f.service.transition({
+      delivery_id: delivery.delivery_id,
+      action: 'CANCEL',
+      idempotency_key: 'cross-tenant-transition'
+    }, f.otherActor),
+    error => error.code === 'TENANT_ACCESS_DENIED'
+  );
+  assert.throws(
+    () => f.service.get(delivery.delivery_id, f.otherActor),
+    error => error.code === 'TENANT_ACCESS_DENIED'
+  );
+  assert.deepEqual(f.db.deliveries.get(delivery.delivery_id), before);
+  assert.equal(f.db.events.length, eventCount);
+});
+
+test('proof belonging to another company cannot authorize Company A delivery completion', () => {
+  const f = fixture();
+  const delivery = f.service.create(f.input, f.actor, 'tenant-proof-create');
+  f.db.deliveries.set(delivery.delivery_id, Object.assign({}, delivery, {
+    status: 'DELIVERY_VERIFICATION_PENDING'
+  }));
+  f.db.proofs.add(['proof-from-b', delivery.delivery_id, 'CO-B'].join(':'));
+
+  assert.throws(
+    () => f.service.transition({
+      delivery_id: delivery.delivery_id,
+      action: 'VERIFY_OTP',
+      idempotency_key: 'foreign-proof-attempt',
+      proof_id: 'proof-from-b'
+    }, f.driver),
+    error => error.code === 'VERIFIED_PROOF_REQUIRED'
+  );
+});
