@@ -143,7 +143,7 @@ function fixture() {
         if (prior.drive_file_id !== evidence.drive_file_id || prior.delivery_id !== evidence.delivery_id || prior.company_id !== evidence.company_id) throw Object.assign(new Error('evidence conflict'), { code: 'PROOF_EVIDENCE_ID_CONFLICT' });
         return prior;
       }
-      if (Array.from(db.proofEvidence.values()).some(x => x.drive_file_id === evidence.drive_file_id && x.delivery_id !== evidence.delivery_id)) throw Object.assign(new Error('evidence reuse'), { code: 'DRIVE_EVIDENCE_REUSE_DENIED' });
+      if (Array.from(db.proofEvidence.values()).some(x => x.drive_file_id === evidence.drive_file_id)) throw Object.assign(new Error('evidence reuse'), { code: 'DRIVE_EVIDENCE_REUSE_DENIED' });
       db.proofEvidence.set(evidence.evidence_id, Object.assign({}, evidence));
       return evidence;
     },
@@ -920,4 +920,15 @@ test('interruption after challenge reservation but before proof-row write is rec
   assert.equal(recovered.status, 'DELIVERED_VERIFIED');
   assert.equal(f.db.proofRecords.size, 1);
   assert.equal(f.db.challenges.get(p.challenge.challenge_id).status, 'CONSUMED');
+});
+
+
+test('a Drive file cannot be registered again for a later proof challenge', () => {
+  const f = fixture();
+  const p = prepareProofFixture(f, { key: 'evidence-reuse' });
+  p.addPhoto('ONE-DRIVE-FILE');
+  const next = p.proofService.issueChallenge({ delivery_id: p.pending.delivery_id }, f.driver);
+  assert.throws(() => p.proofService.registerEvidence({
+    challenge_id: next.challenge_id, drive_file_id: 'ONE-DRIVE-FILE', evidence_type: 'DELIVERY_PHOTO'
+  }, f.driver), error => error.code === 'DRIVE_EVIDENCE_REUSE_DENIED');
 });
