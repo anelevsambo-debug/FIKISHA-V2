@@ -116,3 +116,53 @@ test('event append is idempotent by event ID and rejects conflicting reuse', () 
     error => error.code === 'EVENT_ID_CONFLICT'
   );
 });
+
+test('duplicate delivery IDs across tenants fail closed instead of selecting the first row', () => {
+  const f = fixture();
+  const rowA = Array(20).fill('');
+  rowA[0] = 'SHARED-ID'; rowA[1] = 'CO-A'; rowA[2] = 'RECEIVED'; rowA[14] = 1;
+  const rowB = Array(20).fill('');
+  rowB[0] = 'SHARED-ID'; rowB[1] = 'CO-B'; rowB[2] = 'RECEIVED'; rowB[14] = 1;
+  f.sheets.get('Deliveries').appendRow(rowA);
+  f.sheets.get('Deliveries').appendRow(rowB);
+
+  assert.throws(
+    () => f.store.getDelivery('SHARED-ID'),
+    error => error.code === 'DUPLICATE_DELIVERY_RECORD'
+  );
+  assert.throws(
+    () => f.store.ensureDelivery({ delivery_id: 'SHARED-ID', company_id: 'CO-B' }),
+    error => error.code === 'DUPLICATE_DELIVERY_RECORD'
+  );
+});
+
+test('ensureDelivery rejects a delivery ID already bound to another company', () => {
+  const f = fixture();
+  const row = Array(20).fill('');
+  row[0] = 'D-FOREIGN'; row[1] = 'CO-B'; row[2] = 'RECEIVED'; row[14] = 1;
+  f.sheets.get('Deliveries').appendRow(row);
+
+  assert.throws(
+    () => f.store.ensureDelivery({
+      delivery_id: 'D-FOREIGN', company_id: 'CO-A', status: 'RECEIVED'
+    }),
+    error => error.code === 'DELIVERY_ID_CONFLICT'
+  );
+  assert.equal(f.sheets.get('Deliveries')._data.length, 2);
+});
+
+test('saveDelivery rejects a tenant change and does not overwrite the foreign row', () => {
+  const f = fixture();
+  const row = Array(20).fill('');
+  row[0] = 'D-FOREIGN'; row[1] = 'CO-B'; row[2] = 'RECEIVED'; row[14] = 1;
+  f.sheets.get('Deliveries').appendRow(row);
+
+  assert.throws(
+    () => f.store.saveDelivery({
+      delivery_id: 'D-FOREIGN', company_id: 'CO-A', status: 'CANCELLED', version: 2
+    }, 1),
+    error => error.code === 'TENANT_MISMATCH'
+  );
+  assert.equal(f.sheets.get('Deliveries')._data[1][1], 'CO-B');
+  assert.equal(f.sheets.get('Deliveries')._data[1][2], 'RECEIVED');
+});
