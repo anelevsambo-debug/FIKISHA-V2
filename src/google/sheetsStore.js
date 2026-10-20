@@ -356,32 +356,28 @@ function createSheetsStore(spreadsheetId, lockFactory, logger) {
     saveIdempotency: saveIdempotency,
     isProofVerified: function (proofId, deliveryId, companyId) {
       var proofs = rows("ProofOfDelivery", ["proof_id", "delivery_id", "company_id", "verified", "created_at"]);
-      var proof = findUnique(proofs, function (row) {
-        return row.proof_id === proofId && row.delivery_id === deliveryId && row.company_id === companyId &&
-          String(row.verified).toUpperCase() === "TRUE";
-      }, "DUPLICATE_PROOF_RECORD");
-      if (!proof) return false;
+      var proof = findUnique(proofs, function (row) { return row.proof_id === proofId; }, "DUPLICATE_PROOF_RECORD");
+      if (!proof || proof.delivery_id !== deliveryId || proof.company_id !== companyId ||
+          String(proof.verified).toUpperCase() !== "TRUE") return false;
       var challenge = findUnique(rows("ProofChallenges", challengeHeaders), function (row) {
-        return row.proof_id === proofId && row.delivery_id === deliveryId && row.company_id === companyId &&
-          (row.status === "COMPLETING" || row.status === "CONSUMED");
+        return row.proof_id === proofId;
       }, "DUPLICATE_PROOF_CHALLENGE");
-      if (!challenge) return false;
+      if (!challenge || challenge.delivery_id !== deliveryId || challenge.company_id !== companyId ||
+          (challenge.status !== "COMPLETING" && challenge.status !== "CONSUMED")) return false;
       var evidenceIds;
       try { evidenceIds = JSON.parse(challenge.evidence_ids_json || "[]"); } catch (error) { return false; }
-      if (!Array.isArray(evidenceIds) || evidenceIds.length < 1) return false;
+      if (!Array.isArray(evidenceIds) || evidenceIds.length < 1 ||
+          new Set(evidenceIds).size !== evidenceIds.length) return false;
       var evidenceRows = rows("ProofEvidence", proofEvidenceHeaders);
       return evidenceIds.every(function (id) {
-        var evidence = findUnique(evidenceRows, function (row) {
-          return row.evidence_id === id && row.delivery_id === deliveryId && row.company_id === companyId &&
-            row.challenge_id === challenge.challenge_id && String(row.verified).toUpperCase() === "TRUE";
-        }, "DUPLICATE_PROOF_EVIDENCE");
-        return !!evidence;
+        var evidence = findUnique(evidenceRows, function (row) { return row.evidence_id === id; }, "DUPLICATE_PROOF_EVIDENCE");
+        return !!evidence && evidence.delivery_id === deliveryId && evidence.company_id === companyId &&
+          evidence.challenge_id === challenge.challenge_id && String(evidence.verified).toUpperCase() === "TRUE";
       }) && evidenceIds.some(function (id) {
-        return evidenceRows.some(function (row) {
-          return row.evidence_id === id && row.delivery_id === deliveryId && row.company_id === companyId &&
-            row.challenge_id === challenge.challenge_id && row.evidence_type === "DELIVERY_PHOTO" &&
-            String(row.verified).toUpperCase() === "TRUE";
-        });
+        var evidence = findUnique(evidenceRows, function (row) { return row.evidence_id === id; }, "DUPLICATE_PROOF_EVIDENCE");
+        return evidence && evidence.delivery_id === deliveryId && evidence.company_id === companyId &&
+          evidence.challenge_id === challenge.challenge_id && evidence.evidence_type === "DELIVERY_PHOTO" &&
+          String(evidence.verified).toUpperCase() === "TRUE";
       });
     },
     getChallenge: function (challengeId) {
