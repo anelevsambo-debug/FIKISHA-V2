@@ -187,6 +187,20 @@ function createProofOfDeliveryService(deps) {
             challenge.evidence_ids_json !== requestEvidenceJson || !challenge.proof_id) {
           throw new FikishaError("PROOF_COMPLETION_IN_PROGRESS");
         }
+        // Recover the interruption window after reserving completion but before proof-row persistence.
+        if (!store.getProofRecord(challenge.proof_id)) {
+          var recoveryEvidenceIds;
+          try { recoveryEvidenceIds = JSON.parse(challenge.evidence_ids_json); }
+          catch (error) { throw new FikishaError("PROOF_CHALLENGE_RECORD_INVALID"); }
+          var recoveryEvidence = requireEvidence(recoveryEvidenceIds, challenge, actor, delivery);
+          store.createProofRecord({
+            proof_id: challenge.proof_id, delivery_id: delivery.delivery_id, company_id: delivery.company_id,
+            verified: true, created_at: challenge.updated_at || challenge.created_at,
+            challenge_id: challenge.challenge_id,
+            evidence_ids_json: JSON.stringify(recoveryEvidence.map(function (e) { return e.evidence_id; })),
+            verified_by_actor_id: actor.actor_id
+          });
+        }
         var recovered = deps.deliveryService.transition({
           delivery_id: delivery.delivery_id, action: "VERIFY_OTP",
           idempotency_key: args.idempotency_key, proof_id: challenge.proof_id
