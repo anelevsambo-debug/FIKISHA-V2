@@ -200,3 +200,48 @@ Tests use Node.js VM and fake registry/store adapters. They prove the authorizat
 ### Closure decision
 
 P0-02 is **not closed**. Logical code-level isolation has been strengthened, but this task's live Google resource access-control requirement cannot be proven without an authorized non-production Google workspace and separate Company A / Company B accounts. Resource description markers do not replace ACLs. No real customer records or production permissions were changed. P0-03 and other remediation IDs were not started.
+
+
+## Runtime reliability continuation — 2026-10-20 — Concurrency, idempotency and recovery
+
+**Candidate branch:** `reliability/concurrency-recovery`  
+**Baseline:** `97386e6136d111aff92af8edc794cb675554a3f3`  
+**Status:** CODE CHANGES ADDED; CI AND REVIEW PENDING. Live Google runtime remains unverified.
+
+### Source findings
+
+- `src/google/sheetsStore.js` previously locked individual writes but did not expose a lock spanning a complete create/transition operation. The service could read a delivery, reserve an operation, and then write separate records without one shared critical section.
+- Idempotency lookup and reservation previously selected the first matching key. Duplicate persisted keys could cause an arbitrary record to be treated as authoritative.
+- Create idempotency checked actor ownership but did not bind a key to the original payload; the same actor could accidentally reuse a key with different delivery details and receive the old result.
+- Provisioning used persisted job IDs and marked-resource discovery, but did not run the whole provisioning sequence under the platform registry's script lock.
+- Lock acquisition errors could escape as raw runtime errors; lock release errors could mask an earlier operation error. There was no structured, privacy-safe log for these lock paths.
+
+### Candidate changes
+
+- `src/google/sheetsStore.js`: add a bounded, reentrant `runExclusive` critical section; normalize lock-provider/acquisition/release failures; emit structured logs with component/event/error-code only; fail closed on duplicate idempotency keys during lookup/reservation/completion/update.
+- `src/deliveries/service.js`: execute create and transition flows under the store's exclusive lock, covering the initial read, reservation, delivery update, event write and completion record. Bind create idempotency keys to the actor and normalized delivery payload.
+- `src/platform/platformStore.js`: add a bounded, reentrant exclusive section for compound platform operations, with privacy-safe lock logs.
+- `src/companies/provisioning.js`: execute provisioning under the platform store's exclusive section and log a safe error code and current stage, without provider exception text or customer fields.
+- Tests added for same-key retries, conflicting lifecycle requests, lost response after successful commit, completed-action replay, mismatched payload reuse, lock acquisition/release errors, duplicate idempotency rows, nested lock behavior, duplicate provisioning, and recovery after a resource is created but its identifier cannot be saved.
+
+### Evidence required before closure
+
+- Run GitHub Actions on the exact candidate HEAD and inspect failing/passing test names rather than using the test count as the reliability argument.
+- Verify the concurrent-request tests are recognized as deterministic mock tests only: Node's synchronous service harness does not prove two Apps Script executions overlapped in real Google.
+- Live test must use an owner-authorized non-production Google Workspace, synthetic company records, and isolated resources. Test Apps Script `LockService`, Sheets write outcomes after injected/transient errors, Drive creation/marker persistence, and resource ID recovery. No such live evidence is currently available.
+- No automatic blind retry was introduced for Google API writes. An invocation fails with a safe code; a caller may re-submit only through the idempotent operation/recovery path. Live quota/transient error behavior and retry rate limits remain unverified.
+
+### Current closure decision
+
+**Do not close this finding yet.** Even after passing CI, only code paths exercised by mocks will be VERIFIED. Real simultaneous Apps Script execution, Google service error semantics, quota behavior, Drive/Sheets persistence timing, and live lock release behavior remain UNKNOWN until the authorized runtime suite is run. No deployment or production data use is authorized.
+
+
+### CI result — 2026-10-20
+
+- **Exact tested HEAD:** `0d60f631cf79c9e4a729b719dab3ea5aea2074d1`
+- **GitHub Actions run #231:** [successful CI run](https://github.com/anelevsambo-debug/FIKISHA-V2/actions/runs/39440831609)
+- **Result:** 96 passed, 0 failed, 0 skipped; legacy-term scan passed. Node.js CI used repository workflow and fake/synthetic adapters only. Code-level scenario tests also passed on preceding code HEAD `d489f8ce58605e9975c6467eb74b7056082d3dff` in run #229.
+- Run #219 initially failed one logger assertion because objects created in separate VM contexts have different prototypes. The test was corrected to compare serialized log values; run #221 passed, run #229 passed after the additional exclusive-boundary tests, and run #231 passed on the exact current candidate HEAD. The earlier failure is retained as test-development evidence, not counted as a product defect.
+- **Scenario-level mock evidence:** same create key returns one delivery/event; conflicting lifecycle requests produce one accepted transition; successful create with a simulated lost response replays the stored result; failed event write is recovered on retry; completed transition replay creates no new event; mismatched create payload reuse is rejected; lock acquisition timeout fails closed and logs a safe code; release errors are logged without masking the original schema failure; duplicate idempotency rows fail closed; repeated provisioning reuses resources; a marked folder is rediscovered after job-ID persistence fails; old/incompatible workbook schemas fail closed.
+- **Limitations:** the two-request tests are deterministic Node harness tests, not a true overlapping Apps Script execution test. The event-write failure is injected by a fake adapter, not a real Google API outage. Quota behavior, real Google lock semantics, Drive marker persistence timing, and live recovery remain UNKNOWN.
+- **PR:** [#2 — draft, unmerged](https://github.com/anelevsambo-debug/FIKISHA-V2/pull/2). No deployment, production data, or live Google resources were used.

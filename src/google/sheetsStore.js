@@ -1,15 +1,44 @@
-function createSheetsStore(spreadsheetId, lockFactory) {
+function createSheetsStore(spreadsheetId, lockFactory, logger) {
   if (typeof spreadsheetId !== "string" || !spreadsheetId.trim()) throw new FikishaError("WORKBOOK_ID_REQUIRED");
   if (typeof SpreadsheetApp === "undefined") throw new FikishaError("APPS_SCRIPT_RUNTIME_REQUIRED");
 
   var ss = SpreadsheetApp.openById(spreadsheetId);
   var lockProvider = lockFactory || function () { return LockService.getScriptLock(); };
+  var log = typeof logger === "function" ? logger : function () {};
+  var lockDepth = 0;
+
+  function logReliability(event, code) {
+    try { log({ component: "sheets_store", event: event, code: code }); } catch (ignored) {}
+  }
 
   function withLock(work) {
-    var lock = lockProvider();
-    lock.waitLock(10000);
+    if (lockDepth > 0) {
+      lockDepth += 1;
+      try { return work(); } finally { lockDepth -= 1; }
+    }
+    var lock;
+    try { lock = lockProvider(); }
+    catch (error) {
+      logReliability("lock_unavailable", "LOCK_UNAVAILABLE");
+      throw new FikishaError("LOCK_UNAVAILABLE");
+    }
+    try { lock.waitLock(10000); }
+    catch (error) {
+      logReliability("lock_acquisition_failed", "LOCK_ACQUISITION_TIMEOUT");
+      throw new FikishaError("LOCK_ACQUISITION_TIMEOUT");
+    }
+    lockDepth = 1;
+    var workFailed = false;
     try { return work(); }
-    finally { lock.releaseLock(); }
+    catch (error) { workFailed = true; throw error; }
+    finally {
+      lockDepth = 0;
+      try { lock.releaseLock(); }
+      catch (error) {
+        logReliability("lock_release_failed", "LOCK_RELEASE_FAILED");
+        if (!workFailed) throw new FikishaError("LOCK_RELEASE_FAILED");
+      }
+    }
   }
 
   function sheet(name, headers) {
@@ -96,13 +125,15 @@ function createSheetsStore(spreadsheetId, lockFactory) {
   }
 
   function getIdempotency(key) {
-    var row = rows("Idempotency", idempotencyHeaders).find(function (value) { return value.key === key; });
+    var row = findUnique(rows("Idempotency", idempotencyHeaders), function (value) {
+      return value.key === key;
+    }, "DUPLICATE_IDEMPOTENCY_KEY");
     return row ? parseIdempotencyRecord(row) : null;
   }
 
   function reserveIdempotency(key, candidate) {
     return withLock(function () {
-      var existing = rows("Idempotency", idempotencyHeaders).find(function (row) { return row.key === key; });
+      var existing = findUnique(rows("Idempotency", idempotencyHeaders), function (row) { return row.key === key; }, "DUPLICATE_IDEMPOTENCY_KEY");
       if (existing) return { created: false, record: parseIdempotencyRecord(existing) };
       sheet("Idempotency", idempotencyHeaders).appendRow([
         key,
@@ -116,7 +147,9 @@ function createSheetsStore(spreadsheetId, lockFactory) {
   function completeIdempotency(key, record) {
     return withLock(function () {
       var all = rows("Idempotency", idempotencyHeaders);
-      var index = all.findIndex(function (row) { return row.key === key; });
+      var matches = all.map(function (row, index) { return { row: row, index: index }; }).filter(function (item) { return item.row.key === key; });
+      if (matches.length > 1) throw new FikishaError("DUPLICATE_IDEMPOTENCY_KEY");
+      var index = matches.length ? matches[0].index : -1;
       if (index < 0) throw new FikishaError("IDEMPOTENCY_RESERVATION_MISSING");
       var createdAt = all[index].created_at || record.created_at || new Date().toISOString();
       sheet("Idempotency", idempotencyHeaders).getRange(index + 2, 1, 1, idempotencyHeaders.length).setValues([[
@@ -131,7 +164,9 @@ function createSheetsStore(spreadsheetId, lockFactory) {
   function saveIdempotency(key, value) {
     return withLock(function () {
       var all = rows("Idempotency", idempotencyHeaders);
-      var index = all.findIndex(function (row) { return row.key === key; });
+      var matches = all.map(function (row, index) { return { row: row, index: index }; }).filter(function (item) { return item.row.key === key; });
+      if (matches.length > 1) throw new FikishaError("DUPLICATE_IDEMPOTENCY_KEY");
+      var index = matches.length ? matches[0].index : -1;
       var createdAt = index >= 0 ? all[index].created_at : (value.created_at || new Date().toISOString());
       var data = [key, JSON.stringify(value), createdAt];
       if (index < 0) sheet("Idempotency", idempotencyHeaders).appendRow(data);
@@ -158,6 +193,7 @@ function createSheetsStore(spreadsheetId, lockFactory) {
   }
 
   return Object.freeze({
+    runExclusive: function (work) { if (typeof work !== "function") throw new FikishaError("LOCK_CALLBACK_REQUIRED"); return withLock(work); },
     getDelivery: getDelivery,
     insertDelivery: function (delivery) {
       var result = ensureDelivery(delivery);

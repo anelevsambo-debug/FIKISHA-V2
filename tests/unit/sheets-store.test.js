@@ -38,7 +38,7 @@ function makeSheet(name, firstRow) {
   };
 }
 
-function fixture() {
+function fixture(options = {}) {
   const sheets = new Map(Object.entries(headers).map(([name, row]) => [name, makeSheet(name, row)]));
   const spreadsheet = {
     getSheetByName: name => sheets.get(name) || null,
@@ -51,7 +51,7 @@ function fixture() {
   const context = vm.createContext({
     SpreadsheetApp: { openById: () => spreadsheet },
     LockService: {
-      getScriptLock: () => ({
+      getScriptLock: () => options.lockFactory ? options.lockFactory() : ({
         waitLock() {},
         releaseLock() {}
       })
@@ -59,7 +59,8 @@ function fixture() {
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/core/errors.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/google/sheetsStore.js'), 'utf8'), context);
-  return { context, sheets, store: context.createSheetsStore('test-workbook') };
+  const logger = options.logger || function () {};
+  return { context, sheets, store: context.createSheetsStore('test-workbook', null, logger) };
 }
 
 test('idempotency reservation keeps one key and completion preserves original creation timestamp', () => {
@@ -165,4 +166,114 @@ test('saveDelivery rejects a tenant change and does not overwrite the foreign ro
   );
   assert.equal(f.sheets.get('Deliveries')._data[1][1], 'CO-B');
   assert.equal(f.sheets.get('Deliveries')._data[1][2], 'RECEIVED');
+});
+
+
+test('lock acquisition timeout fails closed, does not run the write, and emits a safe structured log', () => {
+  const logs = [];
+  let releaseCalls = 0;
+  const f = fixture({
+    logger: event => logs.push(event),
+    lockFactory: () => ({
+      waitLock() { throw new Error('private runtime detail'); },
+      releaseLock() { releaseCalls += 1; }
+    })
+  });
+
+  assert.throws(
+    () => f.store.reserveIdempotency('CO-A:timeout', { operation_id: 'OP-1' }),
+    error => error.code === 'LOCK_ACQUISITION_TIMEOUT'
+  );
+  assert.equal(f.sheets.get('Idempotency')._data.length, 1);
+  assert.equal(releaseCalls, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(logs)), [{
+    component: 'sheets_store',
+    event: 'lock_acquisition_failed',
+    code: 'LOCK_ACQUISITION_TIMEOUT'
+  }]);
+  assert.equal(JSON.stringify(logs).includes('private runtime detail'), false);
+});
+
+test('lock release failure is surfaced after a successful write and logged safely', () => {
+  const logs = [];
+  const f = fixture({
+    logger: event => logs.push(event),
+    lockFactory: () => ({
+      waitLock() {},
+      releaseLock() { throw new Error('private release detail'); }
+    })
+  });
+
+  assert.throws(
+    () => f.store.reserveIdempotency('CO-A:release', { operation_id: 'OP-1' }),
+    error => error.code === 'LOCK_RELEASE_FAILED'
+  );
+  assert.equal(f.sheets.get('Idempotency')._data.length, 2);
+  assert.equal(logs[0].event, 'lock_release_failed');
+  assert.equal(JSON.stringify(logs).includes('private release detail'), false);
+});
+
+test('duplicate persisted idempotency keys fail closed instead of selecting an arbitrary record', () => {
+  const f = fixture();
+  const row = ['CO-A:duplicate', JSON.stringify({ state: 'IN_PROGRESS', operation_id: 'OP-1' }), '2026-10-20T00:00:00.000Z'];
+  f.sheets.get('Idempotency').appendRow(row);
+  f.sheets.get('Idempotency').appendRow(['CO-A:duplicate', JSON.stringify({ state: 'COMPLETED', operation_id: 'OP-2' }), '2026-10-20T00:01:00.000Z']);
+
+  assert.throws(
+    () => f.store.getIdempotency('CO-A:duplicate'),
+    error => error.code === 'DUPLICATE_IDEMPOTENCY_KEY'
+  );
+  assert.throws(
+    () => f.store.reserveIdempotency('CO-A:duplicate', { operation_id: 'OP-3' }),
+    error => error.code === 'DUPLICATE_IDEMPOTENCY_KEY'
+  );
+});
+
+
+test('runExclusive holds one lock across nested store writes and releases it once', () => {
+  let acquisitions = 0;
+  let releases = 0;
+  const f = fixture({
+    lockFactory: () => ({
+      waitLock(timeoutMs) {
+        acquisitions += 1;
+        assert.equal(timeoutMs, 10000);
+      },
+      releaseLock() { releases += 1; }
+    })
+  });
+
+  f.store.runExclusive(() => {
+    f.store.reserveIdempotency('CO-A:outer-lock', { operation_id: 'OP-1' });
+    f.store.ensureEvent({
+      event_id: 'E-OUTER', company_id: 'CO-A', delivery_id: 'D-1',
+      event_type: 'TEST', actor_id: 'A-1', from_status: '', to_status: '',
+      reason: '', proof_id: '', created_at: '2026-10-20T00:00:00.000Z'
+    });
+  });
+
+  assert.equal(acquisitions, 1);
+  assert.equal(releases, 1);
+  assert.equal(f.sheets.get('Idempotency')._data.length, 2);
+  assert.equal(f.sheets.get('DeliveryEvents')._data.length, 2);
+});
+
+
+test('lock release failure does not mask the original schema error', () => {
+  const logs = [];
+  const f = fixture({
+    logger: event => logs.push(event),
+    lockFactory: () => ({
+      waitLock() {},
+      releaseLock() { throw new Error('private release detail'); }
+    })
+  });
+  f.sheets.get('Idempotency')._data[0][0] = 'wrong_header';
+
+  assert.throws(
+    () => f.store.reserveIdempotency('CO-A:schema', { operation_id: 'OP-1' }),
+    error => error.code === 'SHEET_SCHEMA_MISMATCH'
+  );
+  assert.equal(logs[0].event, 'lock_release_failed');
+  assert.equal(JSON.stringify(logs).includes('private release detail'), false);
 });

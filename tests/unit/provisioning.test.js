@@ -97,13 +97,21 @@ function fixture(options = {}) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/core/actorResolver.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/companies/provisioning.js'), 'utf8'), context);
 
+  let saveJobCalls = 0;
+  let exclusiveCalls = 0;
+  const failSaveCalls = new Set(options.failSaveCalls || []);
   const platform = {
+    runExclusive(work) { exclusiveCalls += 1; return work(); },
     company: options.company || { company_id: 'CO-A', name: 'Company A', status: 'ACTIVE' },
     job: options.job || null,
     resources: null,
     getCompany(id) { return options.company ? this.company : (id === this.company.company_id ? this.company : null); },
     getProvisioningJob() { return this.job ? Object.assign({}, this.job) : null; },
-    saveProvisioningJob(job) { this.job = Object.assign({}, job); },
+    saveProvisioningJob(job) {
+      saveJobCalls += 1;
+      if (failSaveCalls.has(saveJobCalls)) throw Object.assign(new Error('simulated registry write failure'), { code: 'SIMULATED_REGISTRY_WRITE_FAILURE' });
+      this.job = Object.assign({}, job);
+    },
     updateCompanyResources(id, resources) {
       if (id !== this.company.company_id) throw new Error('wrong company');
       this.resources = Object.assign({}, resources);
@@ -141,7 +149,7 @@ function fixture(options = {}) {
       if (!spreadsheet || company.company_id !== 'CO-A') throw new Error('unexpected initializer arguments');
     }
   });
-  return { context, platform, provisioner, root, folders, files, workbooks, template, workbook, admin, companyAdmin };
+  return { context, platform, provisioner, root, folders, files, workbooks, template, workbook, admin, companyAdmin, exclusiveCalls: () => exclusiveCalls };
 }
 
 const folderMarker = 'FIKISHA-V2|company_id=CO-A|resource=operations-folder';
@@ -158,6 +166,7 @@ test('provisioner creates marked resources and persists completion state', () =>
   assert.equal(f.files.get('file-1').getDescription(), workbookMarker);
   assert.equal(f.platform.job.status, 'NEEDS_OWNER_ACTION');
   assert.equal(f.platform.resources.workbook_id, 'file-1');
+  assert.equal(f.exclusiveCalls(), 1);
 });
 
 test('provisioner reuses uniquely marked resources after a lost job reference', () => {
@@ -253,4 +262,54 @@ test('provisioner rejects a provisioning job bound to another company', () => {
     error => error.code === 'PROVISIONING_JOB_COMPANY_MISMATCH'
   );
   assert.equal(f.root.folders.length, 0);
+});
+
+
+test('repeated provisioning reuses the same marked resources without duplicates', () => {
+  const f = fixture();
+  const first = f.provisioner.provision('CO-A', f.admin);
+  const second = f.provisioner.provision('CO-A', f.admin);
+
+  assert.equal(second.drive_folder_id, first.drive_folder_id);
+  assert.equal(second.workbook_id, first.workbook_id);
+  assert.equal(f.root.folders.length, 1);
+  assert.equal(f.root.folders[0].files.length, 1);
+  assert.equal(f.platform.resources.workbook_id, first.workbook_id);
+});
+
+test('retry recovers a marked folder when saving its identifier and failure state both fail', () => {
+  const f = fixture({ failSaveCalls: [2, 3] });
+
+  assert.throws(
+    () => f.provisioner.provision('CO-A', f.admin),
+    error => error.code === 'PROVISIONING_STATE_SAVE_FAILED'
+  );
+  assert.equal(f.root.folders.length, 1);
+  assert.equal(f.root.folders[0].getDescription(), folderMarker);
+  assert.equal(f.platform.job.folder_id, undefined);
+
+  const recovered = f.provisioner.provision('CO-A', f.admin);
+  assert.equal(recovered.drive_folder_id, 'folder-1');
+  assert.equal(f.root.folders.length, 1);
+  assert.equal(f.root.folders[0].files.length, 1);
+  assert.equal(f.platform.job.status, 'NEEDS_OWNER_ACTION');
+});
+
+test('provisioning failures emit structured logs without exposing provider exception details', () => {
+  const logs = [];
+  const f = fixture({ company: { company_id: 'CO-A', name: 'Company A', status: 'DISABLED' } });
+  // Reuse the resolver-branded actor from the original fixture through a minimal injected resolver.
+  const resolver = { assertTrusted(actor) { if (actor !== f.admin) throw Object.assign(new Error('private provider detail'), { code: 'UNTRUSTED_ACTOR_CONTEXT' }); } };
+  const safeLoggerProvisioner = f.context.createCompanyProvisioner({
+    platformStore: f.platform,
+    platformActorResolver: resolver,
+    templateSpreadsheetId: 'template',
+    rootFolderId: 'root',
+    logger: event => logs.push(event),
+    initializeWorkbook() {}
+  });
+  assert.throws(() => safeLoggerProvisioner.provision('CO-A', f.admin), error => error.code === 'COMPANY_NOT_ACTIVE');
+  assert.equal(logs[0].event, 'provisioning_failed');
+  assert.equal(logs[0].code, 'COMPANY_NOT_ACTIVE');
+  assert.equal(JSON.stringify(logs).includes('private provider detail'), false);
 });
