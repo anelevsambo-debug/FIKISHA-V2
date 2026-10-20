@@ -47,3 +47,7 @@ The existing state machine also contains `ATTEMPT_DELIVERY`, `VERIFY_OTP`, and `
 Node.js tests use synthetic data and fake stores/senders. They exercise the actual delivery, dispatch and outbox application logic, but they do not prove real Google Sheets locking, trigger scheduling, quota behavior, Drive/AppSheet permissions, or provider delivery. The Google workbook initializer creates the new tabs for an existing schema-v2 workbook if they are absent, and fails closed on incompatible existing headers. Real Google integration remains unverified.
 
 Proof-of-delivery implementation is explicitly out of scope for this stage.
+
+## Trusted SYSTEM actor boundary
+
+The existing state machine requires role `SYSTEM` for quote/offer expiry actions. Company membership resolution intentionally does not allow a user to self-assign this role. `createTrustedActorResolver` now exposes `resolveSystemActor`, which only brands a SYSTEM actor when an injected `getAuthenticatedSystemPrincipal` callback returns a non-empty principal. That callback must validate the actual internal scheduled invocation; it must not read request fields or be a permissive constant. This repository has no live scheduled-job identity provider configured, so expiry is mock-tested with an injected synthetic principal and is not production-operational yet.
