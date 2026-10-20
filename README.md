@@ -8,6 +8,7 @@ FIKISHA-V2 is intended to coordinate real deliveries for multiple companies in B
 - Core input validation, role helper, partial lifecycle state machine and tenant-context helper.
 - Trusted actor resolver contract that checks an injected identity provider against active company membership and rejects caller-created actor objects.
 - Platform registry Sheets adapter for company metadata, memberships and provisioning-job state, covered by fake-Sheets tests.
+- Retry-safe company Drive-folder/workbook provisioning primitives that discover and validate existing marked resources after partial failure.
 - Delivery service for validated creation, guarded transitions and audit-event calls.
 - Google Sheets adapter with script-lock-protected idempotency reservation, duplicate-safe create-row/event writes, and retry recovery for partial create and transition operations; workbook schema v2 includes a last-operation marker.
 - Initial company workbook schema initializer and tests that preserve existing data.
@@ -17,10 +18,10 @@ FIKISHA-V2 is intended to coordinate real deliveries for multiple companies in B
 - Engineering anti-loop protocol, stable remediation register and architecture/data-model/tenancy/WhatsApp/cost/privacy/operations/launch-gate documents.
 
 ## Not implemented or live-verified
-- No authenticated operational API or real trusted identity provider/membership-store adapter is connected. The actor resolver is a tested contract, not proof of end-to-end authentication. The public POST entrypoint remains disabled and returns WEBHOOK_NOT_CONFIGURED.
-- No Google workbook, Drive folder or AppSheet app has been created or verified.
+- No authenticated operational API or real trusted identity provider/live platform workbook is connected. The actor resolver and membership adapter are tested contracts/adapters, not proof of end-to-end authentication. The public POST entrypoint remains disabled and returns WEBHOOK_NOT_CONFIGURED.
+- No real platform/company workbook, Drive folder or AppSheet app has been created or verified. Provisioning code is not live-tested.
 - No live WhatsApp credentials or messages have been configured.
-- Inbound webhook signature verification, consent/opt-out processing, message status, retry/dead-letter handling, complete company provisioning, AppSheet actions, backups and live two-company isolation tests remain incomplete.
+- Inbound webhook signature verification, consent/opt-out processing, message status, retry/dead-letter handling, end-to-end company onboarding, AppSheet actions, backups and live two-company isolation tests remain incomplete.
 - Create and transition recovery have only been tested using Node.js fakes; actual Apps Script locking and concurrent Google Sheets behavior remain unverified.
 - Google Sheets does not provide a transaction across delivery, event and idempotency writes. These writes remain separate, although create/transition retries now use idempotency records and recovery markers.
 
