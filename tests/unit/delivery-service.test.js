@@ -897,3 +897,27 @@ test('interrupted proof completion recovers using the same challenge, evidence a
   assert.equal(recovered.status, 'DELIVERED_VERIFIED');
   assert.equal(f.db.challenges.get(p.challenge.challenge_id).status, 'CONSUMED');
 });
+
+
+test('interruption after challenge reservation but before proof-row write is recoverable', () => {
+  const f = fixture();
+  const p = prepareProofFixture(f, { key: 'proof-row-recovery' });
+  const evidence = p.addPhoto();
+  const originalCreate = f.store.createProofRecord.bind(f.store);
+  let failOnce = true;
+  f.store.createProofRecord = function (proof) {
+    if (failOnce) {
+      failOnce = false;
+      throw Object.assign(new Error('simulated proof-row write interruption'), { code: 'SIMULATED_PROOF_ROW_FAILURE' });
+    }
+    return originalCreate(proof);
+  };
+  const request = { challenge_id: p.challenge.challenge_id, otp: p.sent[0].code, evidence_ids: [evidence.evidence_id], idempotency_key: 'proof-row-recovery-key' };
+  assert.throws(() => p.proofService.completeDelivery(request, f.driver), error => error.code === 'SIMULATED_PROOF_ROW_FAILURE');
+  assert.equal(f.db.challenges.get(p.challenge.challenge_id).status, 'COMPLETING');
+  assert.equal(f.db.proofRecords.size, 0);
+  const recovered = p.proofService.completeDelivery(request, f.driver);
+  assert.equal(recovered.status, 'DELIVERED_VERIFIED');
+  assert.equal(f.db.proofRecords.size, 1);
+  assert.equal(f.db.challenges.get(p.challenge.challenge_id).status, 'CONSUMED');
+});
