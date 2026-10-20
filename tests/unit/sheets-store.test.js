@@ -194,7 +194,7 @@ test('lock acquisition timeout fails closed, does not run the write, and emits a
   assert.equal(JSON.stringify(logs).includes('private runtime detail'), false);
 });
 
-test('lock release failure is observable and does not mask a failed write operation', () => {
+test('lock release failure is surfaced after a successful write and logged safely', () => {
   const logs = [];
   const f = fixture({
     logger: event => logs.push(event),
@@ -256,4 +256,24 @@ test('runExclusive holds one lock across nested store writes and releases it onc
   assert.equal(releases, 1);
   assert.equal(f.sheets.get('Idempotency')._data.length, 2);
   assert.equal(f.sheets.get('DeliveryEvents')._data.length, 2);
+});
+
+
+test('lock release failure does not mask the original schema error', () => {
+  const logs = [];
+  const f = fixture({
+    logger: event => logs.push(event),
+    lockFactory: () => ({
+      waitLock() {},
+      releaseLock() { throw new Error('private release detail'); }
+    })
+  });
+  f.sheets.get('Idempotency')._data[0][0] = 'wrong_header';
+
+  assert.throws(
+    () => f.store.reserveIdempotency('CO-A:schema', { operation_id: 'OP-1' }),
+    error => error.code === 'SHEET_SCHEMA_MISMATCH'
+  );
+  assert.equal(logs[0].event, 'lock_release_failed');
+  assert.equal(JSON.stringify(logs).includes('private release detail'), false);
 });
