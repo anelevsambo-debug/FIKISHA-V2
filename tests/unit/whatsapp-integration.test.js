@@ -137,6 +137,25 @@ test('timeout after provider acceptance becomes OUTCOME_UNKNOWN and is not blind
   assert.equal(f.notifications.get('N1').status,'OUTCOME_UNKNOWN');
 });
 
+test('transient send failures consume exactly one retry attempt per successful claim', () => {
+  const f = fixture({senderError:Object.assign(new Error('temporary'),{code:'RATE_LIMITED'}),maxAttempts:3});
+  f.queue();
+
+  const first = f.service.sendQueued('N1');
+  assert.equal(first.status,'RETRY');
+  assert.equal(f.notifications.get('N1').attempt_count,1);
+
+  const second = f.service.sendQueued('N1');
+  assert.equal(second.status,'RETRY');
+  assert.equal(f.notifications.get('N1').attempt_count,2);
+
+  const third = f.service.sendQueued('N1');
+  assert.equal(third.status,'FAILED');
+  assert.equal(f.notifications.get('N1').attempt_count,3);
+  assert.equal(f.notifications.get('N1').last_error_code,'RETRY_EXHAUSTED');
+  assert.equal(f.sendCount,3);
+});
+
 test('permanent errors fail and transient failures exhaust retry budget', () => {
   let f=fixture({senderError:Object.assign(new Error('bad request'),{code:'TEMPLATE_INVALID',permanent:true})}); f.queue();
   assert.equal(f.service.sendQueued('N1').status,'FAILED');

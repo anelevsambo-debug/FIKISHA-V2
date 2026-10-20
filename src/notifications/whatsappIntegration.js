@@ -141,6 +141,9 @@ function createWhatsAppIntegration(deps) {
       store.markNotificationFailed(notificationId, "TEMPLATE_NOT_APPROVED");
       fail("TEMPLATE_NOT_APPROVED");
     }
+    // Snapshot before claiming: some stores mutate the fetched item while atomically
+    // incrementing attempt_count. Do not derive the retry count from that mutable object.
+    var attemptCountBeforeClaim = Number(item.attempt_count || 0);
     var claimed = store.claimNotificationForSend(notificationId, nowIso || deps.clock().toISOString());
     if (!claimed) fail("NOTIFICATION_NOT_CLAIMED");
     // Consent is checked again after claim and immediately before provider submission.
@@ -166,7 +169,8 @@ function createWhatsAppIntegration(deps) {
         return { status: "OUTCOME_UNKNOWN", retry: false };
       }
       var code = error && error.code && /^[A-Z0-9_]{1,64}$/.test(error.code) ? error.code : "PROVIDER_SEND_FAILED";
-      var attempts = Number(item.attempt_count || 0) + 1;
+      // The successful claim represents exactly one attempt, even if it mutated `item`.
+      var attempts = attemptCountBeforeClaim + 1;
       if (error && error.permanent === true) store.markNotificationFailed(notificationId, code);
       else if (attempts >= maxAttempts) store.markNotificationFailed(notificationId, "RETRY_EXHAUSTED");
       else store.markNotificationRetry(notificationId, code, attempts, deps.clock().toISOString());
