@@ -12,7 +12,7 @@
 | Retry failed notifications | Scheduled trigger | Not implemented |
 | Stale assignment alert | Scheduled trigger | Not implemented |
 | Daily company summary | Scheduled trigger | Not implemented |
-| Company provisioning | Admin request | Not implemented |
+| Company provisioning | Admin request | Partial Apps Script provisioning primitives; no live resources or end-to-end owner workflow verified |
 | Workbook reconciliation | Scheduled trigger | Not implemented |
 | Backup and restore | Scheduled trigger/manual exercise | Not implemented |
 
