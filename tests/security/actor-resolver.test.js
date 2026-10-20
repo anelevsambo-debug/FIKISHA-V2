@@ -10,6 +10,7 @@ function fixture(options = {}) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/core/actorResolver.js'), 'utf8'), context);
 
   const identities = new WeakMap();
+  const systemPrincipals = new WeakMap();
   const memberships = new Map([
     ['admin@example.test', { actor_id: 'admin-a', email: 'ADMIN@example.test', company_id: 'CO-A', role: 'COMPANY_ADMIN', active: true }],
     ['driver@example.test', { actor_id: 'driver-a', email: 'driver@example.test', company_id: 'CO-A', role: 'DRIVER', active: true }],
@@ -20,6 +21,10 @@ function fixture(options = {}) {
     getAuthenticatedEmail(invocation) {
       if (options.identityFailure) throw new Error('sensitive identity provider details');
       return identities.get(invocation) || '';
+    },
+    getAuthenticatedSystemPrincipal(invocation) {
+      if (options.systemFailure) throw new Error('sensitive system identity details');
+      return systemPrincipals.get(invocation) || '';
     },
     membershipStore: {
       getMembershipByEmail(email) {
@@ -39,7 +44,12 @@ function fixture(options = {}) {
     identities.set(value, email);
     return value;
   }
-  return { resolver, invocation };
+  function systemInvocation(principal) {
+    const value = {};
+    systemPrincipals.set(value, principal);
+    return value;
+  }
+  return { resolver, invocation, systemInvocation };
 }
 
 test('resolver creates a frozen actor from authenticated identity and active membership', () => {
@@ -193,5 +203,27 @@ test('inactive platform administrator is denied', () => {
   assert.throws(
     () => resolver.resolvePlatformAdmin(invocation),
     error => error.code === 'ACTOR_INACTIVE'
+  );
+});
+
+
+test('system actor requires a separately injected authenticated system principal', () => {
+  const f = fixture();
+  assert.throws(
+    () => f.resolver.resolveSystemActor({}, 'CO-A'),
+    error => error.code === 'SYSTEM_IDENTITY_REQUIRED'
+  );
+  const actor = f.resolver.resolveSystemActor(f.systemInvocation('expiry-worker'), 'CO-A');
+  assert.equal(actor.actor_id, 'SYSTEM:expiry-worker');
+  assert.equal(actor.role, 'SYSTEM');
+  assert.equal(actor.company_id, 'CO-A');
+  assert.equal(f.resolver.isTrusted(actor), true);
+});
+
+test('system principal failures are normalized and do not leak provider details', () => {
+  const f = fixture({ systemFailure: true });
+  assert.throws(
+    () => f.resolver.resolveSystemActor({}, 'CO-A'),
+    error => error.code === 'SYSTEM_IDENTITY_PROVIDER_FAILURE' && !error.message.includes('sensitive')
   );
 });
