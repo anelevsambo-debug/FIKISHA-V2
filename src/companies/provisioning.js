@@ -15,6 +15,7 @@ function createCompanyProvisioner(deps) {
 
   var platformStore = deps.platformStore;
   var log = typeof deps.logger === "function" ? deps.logger : function () {};
+  var activeStep = "STARTED";
 
   function logReliability(event, code, step) {
     try { log({ component: "provisioning", event: event, code: code, step: step || "UNKNOWN" }); } catch (ignored) {}
@@ -72,6 +73,7 @@ function createCompanyProvisioner(deps) {
       created_at: new Date().toISOString()
     };
     platformStore.saveProvisioningJob(job);
+    activeStep = "PROVISIONING_JOB_SAVED";
 
     try {
       var folderName = "FIKISHA-" + companyId;
@@ -94,6 +96,7 @@ function createCompanyProvisioner(deps) {
           job.folder_id = folder.getId();
         }
         job.step = "FOLDER_CREATED";
+        activeStep = "FOLDER_CREATED";
         platformStore.saveProvisioningJob(job);
       }
 
@@ -118,6 +121,7 @@ function createCompanyProvisioner(deps) {
           job.workbook_id = file.getId();
         }
         job.step = "WORKBOOK_COPIED";
+        activeStep = "WORKBOOK_COPIED";
         platformStore.saveProvisioningJob(job);
         workbook = SpreadsheetApp.openById(job.workbook_id);
       }
@@ -127,9 +131,11 @@ function createCompanyProvisioner(deps) {
 
       job.status = "NEEDS_OWNER_ACTION";
       job.step = "WORKBOOK_INITIALIZED";
+      activeStep = "WORKBOOK_INITIALIZED";
       job.note = "AppSheet app creation and real-user access verification are still required.";
       job.updated_at = new Date().toISOString();
       platformStore.saveProvisioningJob(job);
+      activeStep = "RECORDING_COMPANY_RESOURCES";
       platformStore.updateCompanyResources(companyId, {
         drive_folder_id: job.folder_id,
         workbook_id: job.workbook_id,
@@ -160,10 +166,11 @@ function createCompanyProvisioner(deps) {
       var result = typeof platformStore.runExclusive === "function"
         ? platformStore.runExclusive(function () { return provisionUnlocked(companyId, actor); })
         : provisionUnlocked(companyId, actor);
-      logReliability("provisioning_completed", "PROVISIONING_COMPLETED", "WORKBOOK_INITIALIZED");
+      activeStep = "COMPLETED";
+      logReliability("provisioning_completed", "PROVISIONING_COMPLETED", activeStep);
       return result;
     } catch (error) {
-      logReliability("provisioning_failed", error && error.code ? error.code : "PROVISIONING_FAILED", "UNKNOWN");
+      logReliability("provisioning_failed", error && error.code ? error.code : "PROVISIONING_FAILED", activeStep);
       throw error;
     }
   }
