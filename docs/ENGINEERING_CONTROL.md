@@ -44,3 +44,34 @@ A status must not jump ahead of the evidence available. Unit and adapter tests a
 ## Current verified boundary
 
 As of the initial reconciliation batch, `src/Code.js` is a placeholder: `doPost` returns `WEBHOOK_NOT_CONFIGURED`; `doGet` reports `status: "configured"` despite no operational API. No live Apps Script, AppSheet, Drive, Sheets or WhatsApp integration has been verified. Do not enable the placeholder as a production webhook.
+
+
+## Owner decision — WhatsApp consent and opt-out — 2026-10-20
+
+**Decision ID:** FIKISHA-ODR-CONSENT-01  
+**Owner decision:** **APPROVED — Option A, proposed safe default.**  
+**Marketing:** **DISABLED** pending separate review.  
+**Scope:** Policy decision only. This record does not assert that consent controls are implemented or legally/platform certified.
+
+### Approved policy
+
+1. Obtain and record explicit opt-in for each phone number and each applicable message purpose/category. Supplying a phone number, registering for a delivery, or being assigned as a driver is not by itself consent.
+2. Record purpose and provenance: normalized phone number, consent status, exact wording or version, timestamp, collection channel/source, supporting evidence where appropriate, and the status history including later withdrawal and renewed consent.
+3. An opt-out suppresses future outbound messages covered by the affected consent. Suppression applies to messages already queued but not yet sent.
+4. Suppression remains until a new valid opt-in is recorded and verified for the same phone number and applicable purpose. Re-registration, delivery changes or retries do not restore consent.
+5. Check the current consent and suppression state immediately before every outbound send, including retries. If consent is missing, ambiguous, revoked, unavailable or cannot be reliably verified, do not send (fail closed).
+6. Service-related messages and marketing must be treated separately. Delivery/OTP/driver-status messages are not automatically exempt from legal or Meta requirements. Marketing remains disabled until a separate owner decision and policy/legal/platform review.
+7. Do not provide administrators or drivers an informal override that bypasses suppression. If messaging is blocked, use an approved non-messaging operational path where available.
+
+### Required implementation and verification gates
+
+- Build the consent ledger and auditable status history without trusting caller-supplied consent status as authority.
+- Enforce the send-time consent check in the actual outbound path, including queued sends and retries; make suppression durable and race-resistant.
+- Define and test supported opt-in/opt-out capture and confirmation flows, purpose boundaries, duplicate/normalized phone handling, and controlled administrative corrections.
+- Restrict access to consent records and avoid unnecessary phone-number exposure in logs; define retention and deletion rules.
+- Verify Botswana legal/privacy/electronic-communications requirements and current WhatsApp Business Platform/Meta policies before activation. Repeat the assessment for Eswatini before expansion. This approval is not a legal-compliance certification.
+- Test with synthetic data in an authorized non-production environment. No live WhatsApp activation or messages are authorized by this decision.
+
+### Current enforcement status
+
+**Consent implementation remains BLOCKED / NOT VERIFIED end-to-end.** Until the consent ledger, send-time enforcement, suppression/re-opt-in handling and required reviews are implemented and verified, outbound WhatsApp messaging must remain blocked wherever this policy applies. Safe non-messaging engineering may continue. This decision authorizes documentation of the policy only; it does not authorize code/schema changes, deployment, activation, or message sending.
