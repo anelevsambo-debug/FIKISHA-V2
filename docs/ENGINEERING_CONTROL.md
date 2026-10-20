@@ -75,3 +75,14 @@ As of the initial reconciliation batch, `src/Code.js` is a placeholder: `doPost`
 ### Current enforcement status
 
 **Consent implementation remains BLOCKED / NOT VERIFIED end-to-end.** Until the consent ledger, send-time enforcement, suppression/re-opt-in handling and required reviews are implemented and verified, outbound WhatsApp messaging must remain blocked wherever this policy applies. Safe non-messaging engineering may continue. This decision authorizes documentation of the policy only; it does not authorize code/schema changes, deployment, activation, or message sending.
+
+
+## Secure WhatsApp integration candidate — 2026-10-20
+
+**Candidate branch:** `build/secure-whatsapp-ingress-consent-outbox`  
+**Status:** candidate adapter and mocked tests added; CI pending; live ingress and provider integration NOT VERIFIED.
+
+- `src/notifications/whatsappIntegration.js` is a policy boundary requiring an injected exact-raw-body signature verifier, server-side WABA/phone allow-list, durable unique event store, current consent gate, approved-template registry and sender. It intentionally does not expose an HTTP endpoint.
+- `tests/unit/whatsapp-integration.test.js` uses synthetic payloads and fake dependencies only. It does not send messages or verify real Meta/Google services.
+- `docs/WHATSAPP_INTEGRATION.md` records the official provider signature/status model, raw-byte ingress constraint, retry and reconciliation rules, configuration prerequisites and release gates.
+- `src/Code.js` remains a placeholder; `doPost` stays disabled. The candidate is not yet wired to a production ingress, real sender, durable provider-event ledger or verified consent store. FVK-04 and FVK-06 remain blocked. No live messages or credentials were used.
