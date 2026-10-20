@@ -367,3 +367,26 @@ This is a policy approval only. FVK-04 remains **BLOCKED** until enforcement is 
 - Candidate deliberately does not expose a webhook endpoint. Existing `src/Code.js` remains fail-closed; `doPost` remains disabled.
 
 **Critical limitations:** the signature verifier, consent ledger, durable provider-event store, provider sender, secret management and live HTTPS gateway are injected interfaces and are not wired to actual services. Google Sheets workbook schema does not yet include a dedicated provider-event ledger. The outbox candidate is not yet integrated end-to-end with this module. Unit tests cannot prove atomic uniqueness, send/opt-out race prevention, exact-byte preservation, provider status semantics, or Apps Script/Google behavior. Therefore FVK-04, FVK-06 and FVK-17 remain open, and live messaging remains NO-GO. No credentials, real recipient data or messages were used.
+
+
+## FVK-WA-RETRY-01 — WhatsApp retry attempt accounting — 2026-10-20
+
+**Related findings:** FVK-04, FVK-06, FVK-07, FVK-17  
+**Candidate PR:** [#7 — draft, unmerged](https://github.com/anelevsambo-debug/FIKISHA-V2/pull/7)  
+**Status:** IMPLEMENTED, CI-VERIFIED for synthetic tests; provider/store integration remains unverified.
+
+### Root cause
+
+`createWhatsAppIntegration().sendQueued` calculated the failed-attempt count from the notification object after `claimNotificationForSend`. The candidate store contract increments `attempt_count` during a successful claim and can mutate the same object returned by `getNotification`. The catch path then added one to the already-incremented value, consuming two retry attempts for one send attempt and exhausting the retry budget prematurely.
+
+### Fix and acceptance evidence
+
+- `src/notifications/whatsappIntegration.js`: snapshot the pre-claim attempt count; derive the failure count from that immutable snapshot plus one.
+- `tests/unit/whatsapp-integration.test.js`: regression test asserts transient failures produce attempt counts 1, 2, and 3, with RETRY, RETRY, then FAILED for a three-attempt budget.
+- Code/test commit: `0c5dd73ac93363dbf9e039784c8ec6325c7492db`.
+- Exact-head CI: [run #333](https://github.com/anelevsambo-debug/FIKISHA-V2/actions/runs/39485367105), tested SHA `0c5dd73ac93363dbf9e039784c8ec6325c7492db`; **147 passed, 0 failed, 0 skipped**; legacy-term scan passed.
+- A documentation-only follow-up records this evidence. Its own resulting commit must also pass exact-head CI before this stage is recorded complete.
+
+### Scope and limitations
+
+No live WhatsApp request, customer data, credential, deployment or message was used. This test proves the module's retry-accounting behavior against its fake store contract only. The durable notification store, provider sender, consent ledger and real provider outcome reconciliation remain unverified. FVK-04/FVK-06 remain open and live messaging stays disabled.
