@@ -295,21 +295,6 @@ test('retry recovers a marked folder when saving its identifier and failure stat
 test('provisioning failures emit structured logs without exposing provider exception details', () => {
   const logs = [];
   const f = fixture({ company: { company_id: 'CO-A', name: 'Company A', status: 'DISABLED' } });
-  const loggedProvisioner = f.context.createCompanyProvisioner({
-    platformStore: f.platform,
-    platformActorResolver: f.context.createTrustedActorResolver({
-      getAuthenticatedEmail: () => 'platform-admin@example.test',
-      membershipStore: {
-        getMembershipByEmail: () => null,
-        getPlatformAdminByEmail: () => ({ actor_id: 'PLATFORM-ADMIN', email: 'platform-admin@example.test', active: true })
-      }
-    }),
-    templateSpreadsheetId: 'template',
-    rootFolderId: 'root',
-    logger: event => logs.push(event),
-    initializeWorkbook() {}
-  });
-  const identities = new WeakMap();
   // Reuse the resolver-branded actor from the original fixture through a minimal injected resolver.
   const resolver = { assertTrusted(actor) { if (actor !== f.admin) throw Object.assign(new Error('private provider detail'), { code: 'UNTRUSTED_ACTOR_CONTEXT' }); } };
   const safeLoggerProvisioner = f.context.createCompanyProvisioner({
