@@ -106,21 +106,27 @@ function fixture() {
   };
 
   const identities = new WeakMap();
+  const systemPrincipals = new WeakMap();
   const memberships = new Map([
     ['admin-a@example.test', { actor_id: 'admin-1', email: 'admin-a@example.test', company_id: 'CO-A', role: 'COMPANY_ADMIN', active: true }],
     ['other@example.test', { actor_id: 'other', email: 'other@example.test', company_id: 'CO-B', role: 'COMPANY_ADMIN', active: true }],
     ['driver@example.test', { actor_id: 'driver', email: 'driver@example.test', company_id: 'CO-A', role: 'DRIVER', active: true }],
     ['driver2@example.test', { actor_id: 'driver2', email: 'driver2@example.test', company_id: 'CO-A', role: 'DRIVER', active: true }],
-    ['dispatcher@example.test', { actor_id: 'dispatcher', email: 'dispatcher@example.test', company_id: 'CO-A', role: 'DISPATCHER', active: true }],
-    ['system@example.test', { actor_id: 'system', email: 'system@example.test', company_id: 'CO-A', role: 'SYSTEM', active: true }]
+    ['dispatcher@example.test', { actor_id: 'dispatcher', email: 'dispatcher@example.test', company_id: 'CO-A', role: 'DISPATCHER', active: true }]
   ]);
   const actorResolver = c.createTrustedActorResolver({
     getAuthenticatedEmail: invocation => identities.get(invocation) || '',
+    getAuthenticatedSystemPrincipal: invocation => systemPrincipals.get(invocation) || '',
     membershipStore: { getMembershipByEmail: email => memberships.get(email) || null }
   });
   function invocation(email) {
     const value = {};
     identities.set(value, email);
+    return value;
+  }
+  function systemInvocation() {
+    const value = {};
+    systemPrincipals.set(value, 'test-expiry-worker');
     return value;
   }
 
@@ -146,7 +152,7 @@ function fixture() {
     driver: actorResolver.resolve(invocation('driver@example.test'), 'CO-A'),
     driver2: actorResolver.resolve(invocation('driver2@example.test'), 'CO-A'),
     dispatcher: actorResolver.resolve(invocation('dispatcher@example.test'), 'CO-A'),
-    system: actorResolver.resolve(invocation('system@example.test'), 'CO-A'),
+    system: actorResolver.resolveSystemActor(systemInvocation(), 'CO-A'),
     dispatchService: null,
     outboxService: null,
     setNow(value) { nowMs = Date.parse(value); },
