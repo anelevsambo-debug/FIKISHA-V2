@@ -54,9 +54,14 @@ function createCompanyProvisioner(deps) {
 
     var company = platformStore.getCompany(companyId);
     if (!company) throw new FikishaError("COMPANY_NOT_FOUND");
-    if (company.status === "SUSPENDED") throw new FikishaError("COMPANY_SUSPENDED");
+    if (company.company_id !== companyId) throw new FikishaError("COMPANY_REGISTRY_BINDING_MISMATCH");
+    if (company.status !== "ACTIVE") throw new FikishaError("COMPANY_NOT_ACTIVE");
 
-    var job = platformStore.getProvisioningJob(companyId) || {
+    var existingJob = platformStore.getProvisioningJob(companyId);
+    if (existingJob && existingJob.company_id !== companyId) {
+      throw new FikishaError("PROVISIONING_JOB_COMPANY_MISMATCH");
+    }
+    var job = existingJob || {
       company_id: companyId,
       status: "PROVISIONING",
       created_at: new Date().toISOString()
