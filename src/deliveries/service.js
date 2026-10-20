@@ -14,12 +14,17 @@ function createDeliveryService(deps) {
     if (actor.role === "DEVELOPER") throw new FikishaError("DEVELOPER_DELIVERY_ACCESS_DENIED");
   }
 
+  function normalizedTimestamp(value) {
+    if (value instanceof Date && !isNaN(value.getTime())) return value.toISOString();
+    return String(value === undefined || value === null ? "" : value);
+  }
+
   function sameCreateIdentity(existing, intended) {
     return existing &&
       existing.delivery_id === intended.delivery_id &&
       existing.company_id === intended.company_id &&
       existing.created_by === intended.created_by &&
-      existing.created_at === intended.created_at;
+      normalizedTimestamp(existing.created_at) === normalizedTimestamp(intended.created_at);
   }
 
   function resumeCreate(key, record) {
