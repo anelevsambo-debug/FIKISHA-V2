@@ -20,15 +20,36 @@ function createTrustedActorResolver(deps) {
     return typeof value === "string" ? value.trim().toLowerCase() : "";
   }
 
-  function resolve(invocationContext, requestedCompanyId) {
-    var email = normalizeEmail(deps.getAuthenticatedEmail(invocationContext));
+  function trustedEmail(invocationContext) {
+    var value;
+    try {
+      value = deps.getAuthenticatedEmail(invocationContext);
+    } catch (error) {
+      throw new FikishaError(error && error.code ? error.code : "IDENTITY_PROVIDER_FAILURE");
+    }
+    var email = normalizeEmail(value);
     if (!email) throw new FikishaError("AUTHENTICATED_IDENTITY_REQUIRED");
+    return email;
+  }
+
+  function registryRead(work) {
+    try {
+      return work();
+    } catch (error) {
+      throw new FikishaError(error && error.code ? error.code : "IDENTITY_REGISTRY_UNAVAILABLE");
+    }
+  }
+
+  function resolve(invocationContext, requestedCompanyId) {
+    var email = trustedEmail(invocationContext);
     if (typeof requestedCompanyId !== "string" || !requestedCompanyId.trim()) {
       throw new FikishaError("COMPANY_CONTEXT_REQUIRED");
     }
 
     var companyId = requestedCompanyId.trim();
-    var membership = deps.membershipStore.getMembershipByEmail(email, companyId);
+    var membership = registryRead(function () {
+      return deps.membershipStore.getMembershipByEmail(email, companyId);
+    });
     if (!membership) throw new FikishaError("MEMBERSHIP_NOT_FOUND");
     if (normalizeEmail(membership.email) !== email || membership.company_id !== companyId) {
       throw new FikishaError("TENANT_ACCESS_DENIED");
@@ -52,9 +73,10 @@ function createTrustedActorResolver(deps) {
 
   function resolvePlatformAdmin(invocationContext) {
     if (typeof deps.membershipStore.getPlatformAdminByEmail !== "function") throw new FikishaError("PLATFORM_ADMIN_STORE_REQUIRED");
-    var email = normalizeEmail(deps.getAuthenticatedEmail(invocationContext));
-    if (!email) throw new FikishaError("AUTHENTICATED_IDENTITY_REQUIRED");
-    var admin = deps.membershipStore.getPlatformAdminByEmail(email);
+    var email = trustedEmail(invocationContext);
+    var admin = registryRead(function () {
+      return deps.membershipStore.getPlatformAdminByEmail(email);
+    });
     if (!admin || normalizeEmail(admin.email) !== email) throw new FikishaError("PLATFORM_ADMIN_REQUIRED");
     if (admin.active !== true) throw new FikishaError("ACTOR_INACTIVE");
     if (typeof admin.actor_id !== "string" || !admin.actor_id.trim()) throw new FikishaError("PLATFORM_ADMIN_RECORD_INVALID");
