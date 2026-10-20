@@ -14,7 +14,7 @@
 | Live tenant isolation | BLOCKED | Requires separate real accounts and workbooks. |
 | Meta outbound adapter | IMPLEMENTED, NOT VERIFIED | Fake HTTP client only; no credentials or live API test. |
 | WhatsApp inbound signature verification | NOT STARTED | doPost remains a placeholder and rejects processing. |
-| Consent and opt-out enforcement | NOT STARTED | Not enforced end to end. |
+| Consent and opt-out enforcement | BLOCKED | Owner policy decision required: recommended default is separate explicit opt-in per phone number and opt-out suppression for future outbound messages. |
 | Proof-of-delivery workflow | BLOCKED | Verification enrollment workflow incomplete. |
 | Backup and restore | NOT STARTED | No recovery exercise. |
 | Production deployment | NOT STARTED | No deployment performed. |
