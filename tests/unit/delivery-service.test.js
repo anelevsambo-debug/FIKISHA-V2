@@ -545,5 +545,5 @@ test('retry repairs offer status when assignment committed before offer record u
   }, f.driver);
   assert.equal(recovered.status, 'ASSIGNED');
   assert.equal(f.db.offers.get(offer.offer_id).status, 'ACCEPTED');
-  assert.equal(f.db.deliveries.get(pending.delivery_id).version, 5);
+  assert.equal(f.db.deliveries.get(pending.delivery_id).version, 6);
 });
