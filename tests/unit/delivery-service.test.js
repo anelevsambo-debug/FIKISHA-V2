@@ -269,3 +269,180 @@ test('proof belonging to another company cannot authorize Company A delivery com
     error => error.code === 'VERIFIED_PROOF_REQUIRED'
   );
 });
+
+
+function prepareDispatch(f, key) {
+  const delivery = f.service.create(f.input, f.actor, 'create-' + key);
+  f.service.transition({ delivery_id: delivery.delivery_id, action: 'VALIDATE_OK', idempotency_key: 'validate-' + key }, f.dispatcher);
+  f.service.transition({ delivery_id: delivery.delivery_id, action: 'ISSUE_QUOTE', idempotency_key: 'quote-' + key }, f.dispatcher);
+  const pending = f.service.transition({ delivery_id: delivery.delivery_id, action: 'ACCEPT_QUOTE', idempotency_key: 'accept-quote-' + key }, f.dispatcher);
+  assert.equal(pending.status, 'DISPATCH_PENDING');
+  return pending;
+}
+
+test('synthetic lifecycle reaches IN_TRANSIT through durable offer acceptance and collection', () => {
+  const f = fixture();
+  const pending = prepareDispatch(f, 'journey');
+  const offer = f.dispatchService.createOffer({
+    delivery_id: pending.delivery_id, driver_id: 'driver', idempotency_key: 'offer-journey'
+  }, f.dispatcher);
+  assert.equal(f.db.offers.get(offer.offer_id).status, 'OFFERED');
+  assert.equal(f.db.deliveries.get(pending.delivery_id).status, 'OFFER_SENT');
+  assert.equal(f.db.outbox.get('driver-offer:' + offer.offer_id).status, 'PENDING');
+
+  const assigned = f.dispatchService.respond({
+    offer_id: offer.offer_id, response: 'ACCEPT', idempotency_key: 'accept-journey'
+  }, f.driver);
+  assert.equal(assigned.status, 'ASSIGNED');
+  assert.equal(assigned.driver_id, 'driver');
+  assert.equal(f.db.offers.get(offer.offer_id).status, 'ACCEPTED');
+
+  const collected = f.service.transition({
+    delivery_id: pending.delivery_id, action: 'CONFIRM_COLLECTION', idempotency_key: 'collect-journey'
+  }, f.driver);
+  assert.equal(collected.status, 'COLLECTED');
+  const transit = f.service.transition({
+    delivery_id: pending.delivery_id, action: 'START_TRANSIT', idempotency_key: 'transit-journey'
+  }, f.driver);
+  assert.equal(transit.status, 'IN_TRANSIT');
+  assert.equal(f.db.deliveries.get(pending.delivery_id).status, 'IN_TRANSIT');
+});
+
+test('invalid offer state and cancellation after dispatch are rejected by approved state machine', () => {
+  const f = fixture();
+  const delivery = f.service.create(f.input, f.actor, 'invalid-offer-create');
+  assert.throws(() => f.dispatchService.createOffer({
+    delivery_id: delivery.delivery_id, driver_id: 'driver', idempotency_key: 'too-early'
+  }, f.dispatcher), error => error.code === 'DELIVERY_NOT_DISPATCH_PENDING');
+
+  const pending = prepareDispatch(f, 'cancel-after-dispatch');
+  const offer = f.dispatchService.createOffer({
+    delivery_id: pending.delivery_id, driver_id: 'driver', idempotency_key: 'cancel-offer'
+  }, f.dispatcher);
+  assert.throws(() => f.service.transition({
+    delivery_id: pending.delivery_id, action: 'CANCEL', idempotency_key: 'cancel-dispatched'
+  }, f.dispatcher), error => error.code === 'INVALID_TRANSITION');
+  assert.equal(f.db.offers.get(offer.offer_id).status, 'OFFERED');
+});
+
+test('competing driver responses cannot assign one delivery twice', async () => {
+  const f = fixture();
+  const pending = prepareDispatch(f, 'race');
+  const offer = f.dispatchService.createOffer({
+    delivery_id: pending.delivery_id, driver_id: 'driver', idempotency_key: 'offer-race'
+  }, f.dispatcher);
+  const results = await Promise.allSettled([
+    Promise.resolve().then(() => f.dispatchService.respond({
+      offer_id: offer.offer_id, response: 'ACCEPT', idempotency_key: 'driver-accept'
+    }, f.driver)),
+    Promise.resolve().then(() => f.dispatchService.respond({
+      offer_id: offer.offer_id, response: 'ACCEPT', idempotency_key: 'driver2-accept'
+    }, f.driver2))
+  ]);
+  assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+  assert.equal(results.filter(r => r.status === 'rejected').length, 1);
+  assert.equal(f.db.deliveries.get(pending.delivery_id).status, 'ASSIGNED');
+  assert.equal(f.db.deliveries.get(pending.delivery_id).driver_id, 'driver');
+  assert.equal(f.db.offers.get(offer.offer_id).status, 'ACCEPTED');
+});
+
+test('repeated acceptance and duplicate offer request do not repeat transitions or notifications', () => {
+  const f = fixture();
+  const pending = prepareDispatch(f, 'duplicates');
+  const request = { delivery_id: pending.delivery_id, driver_id: 'driver', idempotency_key: 'offer-duplicate' };
+  const firstOffer = f.dispatchService.createOffer(request, f.dispatcher);
+  const eventCount = f.db.events.length;
+  const secondOffer = f.dispatchService.createOffer(request, f.dispatcher);
+  assert.equal(secondOffer.offer_id, firstOffer.offer_id);
+  assert.equal(f.db.outbox.has('driver-offer:' + firstOffer.offer_id), true);
+
+  f.dispatchService.respond({ offer_id: firstOffer.offer_id, response: 'ACCEPT', idempotency_key: 'accept-1' }, f.driver);
+  const afterAcceptEvents = f.db.events.length;
+  const replay = f.dispatchService.respond({ offer_id: firstOffer.offer_id, response: 'ACCEPT', idempotency_key: 'accept-2' }, f.driver);
+  assert.equal(replay.status, 'ASSIGNED');
+  assert.equal(f.db.events.length, afterAcceptEvents);
+  assert.ok(afterAcceptEvents >= eventCount);
+  assert.equal(Array.from(f.db.outbox.keys()).filter(id => id === 'driver-offer:' + firstOffer.offer_id).length, 1);
+});
+
+test('expired offer returns delivery to DISPATCH_PENDING and allows deterministic reoffer', () => {
+  const f = fixture();
+  const pending = prepareDispatch(f, 'expiry');
+  const offer = f.dispatchService.createOffer({
+    delivery_id: pending.delivery_id, driver_id: 'driver', idempotency_key: 'offer-expiry'
+  }, f.dispatcher);
+  f.setNow(offer.expires_at);
+  assert.throws(() => f.dispatchService.respond({
+    offer_id: offer.offer_id, response: 'ACCEPT', idempotency_key: 'late-accept'
+  }, f.driver), error => error.code === 'DRIVER_OFFER_EXPIRED');
+  const returned = f.dispatchService.expireOffer(offer.offer_id, f.system);
+  assert.equal(returned.status, 'DISPATCH_PENDING');
+  assert.equal(f.db.offers.get(offer.offer_id).status, 'EXPIRED');
+
+  const reoffer = f.dispatchService.createOffer({
+    delivery_id: pending.delivery_id, driver_id: 'driver2', idempotency_key: 'offer-reoffer'
+  }, f.dispatcher);
+  assert.equal(reoffer.status, 'OFFERED');
+  assert.equal(f.db.deliveries.get(pending.delivery_id).status, 'OFFER_SENT');
+});
+
+test('notification provider acceptance is not treated as delivery and duplicate confirmation is safe', () => {
+  const f = fixture();
+  const pending = prepareDispatch(f, 'notification-status');
+  const offer = f.dispatchService.createOffer({
+    delivery_id: pending.delivery_id, driver_id: 'driver', idempotency_key: 'notification-offer'
+  }, f.dispatcher);
+  const notificationId = 'driver-offer:' + offer.offer_id;
+  const results = f.outboxService.drain(20);
+  assert.ok(results.some(r => r.notification_id === notificationId && r.status === 'SENT_TO_PROVIDER'));
+  assert.equal(f.db.outbox.get(notificationId).status, 'SENT_TO_PROVIDER');
+  assert.notEqual(f.db.outbox.get(notificationId).status, 'DELIVERY_CONFIRMED');
+
+  const confirmed = f.outboxService.recordDeliveryStatus(notificationId, 'DELIVERY_CONFIRMED',
+    f.db.outbox.get(notificationId).provider_message_id, '2026-10-20T00:00:05.000Z');
+  const duplicate = f.outboxService.recordDeliveryStatus(notificationId, 'DELIVERY_CONFIRMED',
+    f.db.outbox.get(notificationId).provider_message_id, '2026-10-20T00:00:06.000Z');
+  assert.equal(confirmed.status, 'DELIVERY_CONFIRMED');
+  assert.equal(duplicate.status, 'DELIVERY_CONFIRMED');
+});
+
+test('notification retries are bounded and exhausted sends become FAILED', () => {
+  const f = fixture();
+  f.store.enqueueNotification({
+    notification_id: 'N-RETRY', company_id: 'CO-A', delivery_id: 'D-X', event_id: 'E-X',
+    recipient_actor_id: 'driver', channel: 'WHATSAPP', template_key: 'TEST',
+    payload_json: '{}', status: 'PENDING', attempt_count: 0, next_attempt_at: '', lease_until: '',
+    last_error_code: '', provider_message_id: '', created_at: '2026-10-20T00:00:00.000Z',
+    updated_at: '2026-10-20T00:00:00.000Z'
+  });
+  const logs = [];
+  const failing = c.createNotificationOutboxService({
+    store: f.store, clock: () => new Date(f.db.outbox.get('N-RETRY')?.updated_at || '2026-10-20T00:00:00.000Z'),
+    maxAttempts: 3, baseDelayMs: 1000, logger: event => logs.push(event),
+    sender: () => { throw Object.assign(new Error('provider secret detail'), { code: 'PROVIDER_TEMPORARY' }); }
+  });
+  failing.drain(20);
+  assert.equal(f.db.outbox.get('N-RETRY').status, 'RETRY');
+  for (let attempt = 2; attempt <= 3; attempt += 1) {
+    f.setNow(f.db.outbox.get('N-RETRY').next_attempt_at);
+    failing.drain(20);
+  }
+  assert.equal(f.db.outbox.get('N-RETRY').attempt_count, 3);
+  assert.equal(f.db.outbox.get('N-RETRY').status, 'FAILED');
+  assert.equal(JSON.stringify(logs).includes('provider secret detail'), false);
+});
+
+test('outbox recovers a notification left PROCESSING after its lease expires', () => {
+  const f = fixture();
+  f.store.enqueueNotification({
+    notification_id: 'N-INTERRUPTED', company_id: 'CO-A', delivery_id: 'D-X', event_id: 'E-X',
+    recipient_actor_id: 'driver', channel: 'WHATSAPP', template_key: 'TEST',
+    payload_json: '{}', status: 'PROCESSING', attempt_count: 1, next_attempt_at: '',
+    lease_until: '2026-10-20T00:00:01.000Z', last_error_code: '', provider_message_id: '',
+    created_at: '2026-10-20T00:00:00.000Z', updated_at: '2026-10-20T00:00:00.000Z'
+  });
+  f.setNow('2026-10-20T00:00:02.000Z');
+  const result = f.outboxService.drain(20);
+  assert.ok(result.some(r => r.notification_id === 'N-INTERRUPTED' && r.status === 'SENT_TO_PROVIDER'));
+  assert.equal(f.db.outbox.get('N-INTERRUPTED').attempt_count, 2);
+});
