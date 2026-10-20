@@ -77,8 +77,16 @@ function createNotificationOutboxService(deps) {
     if (notification.status !== "SENT_TO_PROVIDER" && notification.status !== "DELIVERY_FAILED") {
       throw new FikishaError("NOTIFICATION_NOT_SENT_TO_PROVIDER");
     }
+    var priorStatus = notification.status;
     notification.status = status; notification.updated_at = timestamp || asIso(deps.clock().getTime());
-    store.updateNotification(notification);
+    try {
+      store.updateNotification(notification, priorStatus);
+    } catch (error) {
+      var latest = store.getNotification(notificationId);
+      if (latest && latest.status === status &&
+          (!providerMessageId || !latest.provider_message_id || latest.provider_message_id === providerMessageId)) return latest;
+      throw error;
+    }
     safeLog(status === "DELIVERY_CONFIRMED" ? "delivery_confirmed" : "delivery_failed", status, notification);
     return notification;
   }
