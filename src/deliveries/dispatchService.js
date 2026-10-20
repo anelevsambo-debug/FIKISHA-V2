@@ -55,6 +55,7 @@ function createDispatchService(deps) {
       if (prior) {
         if (!sameRequest(prior, input, delivery.company_id)) throw new FikishaError("DRIVER_OFFER_REQUEST_KEY_REUSED");
         offer = prior;
+        if (offer.status !== "OFFERED") return offer;
       } else {
         if (delivery.status !== "DISPATCH_PENDING") throw new FikishaError("DELIVERY_NOT_DISPATCH_PENDING");
         var active = store.listOffersForDelivery(delivery.delivery_id).find(function (item) { return item.status === "OFFERED"; });
@@ -110,16 +111,26 @@ function createDispatchService(deps) {
       if (offer.status !== "OFFERED") throw new FikishaError("DRIVER_OFFER_NOT_OPEN");
       if (now() >= new Date(offer.expires_at).getTime()) throw new FikishaError("DRIVER_OFFER_EXPIRED");
       var delivery = deps.deliveryService.get(offer.delivery_id, actor);
+      var action = input.response === "ACCEPT" ? "ACCEPT_OFFER" : "DECLINE_OFFER";
+      var responseKey = "offer-response:" + offer.offer_id + ":" + input.response;
       if (input.response === "ACCEPT" && delivery.status === "ASSIGNED" && delivery.driver_id === actor.actor_id) {
         offer.status = "ACCEPTED"; offer.responded_at = iso(now()); offer.response_actor_id = actor.actor_id;
         store.updateOffer(offer, "OFFERED");
         return delivery;
       }
+      if (input.response === "DECLINE" && delivery.status === "DISPATCH_PENDING") {
+        var recoveredDecline = deps.deliveryService.transition({
+          delivery_id: offer.delivery_id, action: action, driver_id: actor.actor_id,
+          idempotency_key: responseKey, reason: ""
+        }, actor);
+        offer.status = "DECLINED"; offer.responded_at = iso(now()); offer.response_actor_id = actor.actor_id;
+        store.updateOffer(offer, "OFFERED");
+        return recoveredDecline;
+      }
       if (delivery.status !== "OFFER_SENT") throw new FikishaError("OFFER_DELIVERY_STATE_CONFLICT");
-      var action = input.response === "ACCEPT" ? "ACCEPT_OFFER" : "DECLINE_OFFER";
       var updated = deps.deliveryService.transition({
         delivery_id: offer.delivery_id, action: action, driver_id: actor.actor_id,
-        idempotency_key: "offer-response:" + offer.offer_id + ":" + input.response, reason: ""
+        idempotency_key: responseKey, reason: ""
       }, actor);
       offer.status = input.response === "ACCEPT" ? "ACCEPTED" : "DECLINED";
       offer.responded_at = iso(now()); offer.response_actor_id = actor.actor_id;
@@ -137,7 +148,9 @@ function createDispatchService(deps) {
       if (offer.status !== "OFFERED") throw new FikishaError("DRIVER_OFFER_NOT_OPEN");
       if (now() < new Date(offer.expires_at).getTime()) throw new FikishaError("DRIVER_OFFER_NOT_EXPIRED");
       var delivery = deps.deliveryService.get(offer.delivery_id, systemActor);
-      if (delivery.status !== "OFFER_SENT") throw new FikishaError("OFFER_DELIVERY_STATE_CONFLICT");
+      if (delivery.status !== "OFFER_SENT" && delivery.status !== "DISPATCH_PENDING") {
+        throw new FikishaError("OFFER_DELIVERY_STATE_CONFLICT");
+      }
       var updated = deps.deliveryService.transition({
         delivery_id: offer.delivery_id, action: "EXPIRE_OFFER",
         idempotency_key: "offer-expire:" + offer.offer_id
