@@ -258,6 +258,14 @@ function createDeliveryService(deps) {
     var current = store.getDelivery(args.delivery_id);
     if (!current) throw new FikishaError("DELIVERY_NOT_FOUND");
     actorCheck(actor, current.company_id);
+    if (args.action === "ACCEPT_OFFER" && (!actor || actor.role !== "DRIVER" || args.driver_id !== actor.actor_id)) {
+      throw new FikishaError("OFFER_DRIVER_MISMATCH");
+    }
+    if (actor && actor.role === "DRIVER" &&
+        ["CONFIRM_COLLECTION", "START_TRANSIT", "ATTEMPT_DELIVERY", "VERIFY_OTP", "FAIL_DELIVERY"].indexOf(args.action) >= 0 &&
+        current.driver_id !== actor.actor_id) {
+      throw new FikishaError("ASSIGNED_DRIVER_REQUIRED");
+    }
 
     var key = actor.company_id + ":TRANSITION:" + args.idempotency_key;
     var prior = store.getIdempotency(key);
