@@ -153,8 +153,6 @@ function fixture() {
     driver2: actorResolver.resolve(invocation('driver2@example.test'), 'CO-A'),
     dispatcher: actorResolver.resolve(invocation('dispatcher@example.test'), 'CO-A'),
     system: actorResolver.resolveSystemActor(systemInvocation(), 'CO-A'),
-    dispatchService: null,
-    outboxService: null,
     setNow(value) { nowMs = Date.parse(value); },
     currentTime() { return nowMs; },
     input: {
@@ -192,7 +190,7 @@ test('cross-company actor cannot read delivery', () => {
 test('driver cannot complete delivery without verified proof', () => {
   const f = fixture();
   const delivery = f.service.create(f.input, f.actor, 'req-1');
-  f.db.deliveries.set(delivery.delivery_id, Object.assign({}, delivery, { status: 'DELIVERY_VERIFICATION_PENDING' }));
+  f.db.deliveries.set(delivery.delivery_id, Object.assign({}, delivery, { status: 'DELIVERY_VERIFICATION_PENDING', driver_id: 'driver' }));
   assert.throws(
     () => f.service.transition({ delivery_id: delivery.delivery_id, action: 'VERIFY_OTP', idempotency_key: 'verify-1', proof_id: 'proof-x' }, f.driver),
     error => error.code === 'VERIFIED_PROOF_REQUIRED'
@@ -262,7 +260,7 @@ test('proof belonging to another company cannot authorize Company A delivery com
   const f = fixture();
   const delivery = f.service.create(f.input, f.actor, 'tenant-proof-create');
   f.db.deliveries.set(delivery.delivery_id, Object.assign({}, delivery, {
-    status: 'DELIVERY_VERIFICATION_PENDING'
+    status: 'DELIVERY_VERIFICATION_PENDING', driver_id: 'driver'
   }));
   f.db.proofs.add(['proof-from-b', delivery.delivery_id, 'CO-B'].join(':'));
 
