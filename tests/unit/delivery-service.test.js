@@ -150,6 +150,7 @@ function fixture() {
     dispatchService: null,
     outboxService: null,
     setNow(value) { nowMs = Date.parse(value); },
+    currentTime() { return nowMs; },
     input: {
       sender_name: 'Sender', sender_phone: '+26770000001',
       recipient_name: 'Recipient', recipient_phone: '+26770000002',
@@ -417,7 +418,7 @@ test('notification retries are bounded and exhausted sends become FAILED', () =>
   });
   const logs = [];
   const failing = c.createNotificationOutboxService({
-    store: f.store, clock: () => new Date(f.db.outbox.get('N-RETRY')?.updated_at || '2026-10-20T00:00:00.000Z'),
+    store: f.store, clock: () => new Date(f.currentTime()),
     maxAttempts: 3, baseDelayMs: 1000, logger: event => logs.push(event),
     sender: () => { throw Object.assign(new Error('provider secret detail'), { code: 'PROVIDER_TEMPORARY' }); }
   });
@@ -445,4 +446,49 @@ test('outbox recovers a notification left PROCESSING after its lease expires', (
   const result = f.outboxService.drain(20);
   assert.ok(result.some(r => r.notification_id === 'N-INTERRUPTED' && r.status === 'SENT_TO_PROVIDER'));
   assert.equal(f.db.outbox.get('N-INTERRUPTED').attempt_count, 2);
+});
+
+
+test('driver decline returns dispatch to pending and a new offer can be issued', () => {
+  const f = fixture();
+  const pending = prepareDispatch(f, 'decline-reoffer');
+  const offer = f.dispatchService.createOffer({
+    delivery_id: pending.delivery_id, driver_id: 'driver', idempotency_key: 'offer-decline'
+  }, f.dispatcher);
+  const declined = f.dispatchService.respond({
+    offer_id: offer.offer_id, response: 'DECLINE', idempotency_key: 'decline-1'
+  }, f.driver);
+  assert.equal(declined.status, 'DISPATCH_PENDING');
+  assert.equal(f.db.offers.get(offer.offer_id).status, 'DECLINED');
+  const second = f.dispatchService.createOffer({
+    delivery_id: pending.delivery_id, driver_id: 'driver2', idempotency_key: 'offer-after-decline'
+  }, f.dispatcher);
+  assert.equal(second.status, 'OFFERED');
+  assert.equal(f.db.deliveries.get(pending.delivery_id).status, 'OFFER_SENT');
+});
+
+test('only the assigned driver may confirm collection or start transit', () => {
+  const f = fixture();
+  const pending = prepareDispatch(f, 'assigned-driver-check');
+  const offer = f.dispatchService.createOffer({
+    delivery_id: pending.delivery_id, driver_id: 'driver', idempotency_key: 'offer-assigned-driver'
+  }, f.dispatcher);
+  f.dispatchService.respond({ offer_id: offer.offer_id, response: 'ACCEPT', idempotency_key: 'accept-assigned-driver' }, f.driver);
+  assert.throws(() => f.service.transition({
+    delivery_id: pending.delivery_id, action: 'CONFIRM_COLLECTION', idempotency_key: 'wrong-driver-collect'
+  }, f.driver2), error => error.code === 'ASSIGNED_DRIVER_REQUIRED');
+  assert.equal(f.db.deliveries.get(pending.delivery_id).status, 'ASSIGNED');
+});
+
+test('replaying an expired offer request does not reopen the old offer', () => {
+  const f = fixture();
+  const pending = prepareDispatch(f, 'expired-key-replay');
+  const request = { delivery_id: pending.delivery_id, driver_id: 'driver', idempotency_key: 'old-offer-key' };
+  const offer = f.dispatchService.createOffer(request, f.dispatcher);
+  f.setNow(offer.expires_at);
+  f.dispatchService.expireOffer(offer.offer_id, f.system);
+  const replay = f.dispatchService.createOffer(request, f.dispatcher);
+  assert.equal(replay.offer_id, offer.offer_id);
+  assert.equal(replay.status, 'EXPIRED');
+  assert.equal(f.db.deliveries.get(pending.delivery_id).status, 'DISPATCH_PENDING');
 });
