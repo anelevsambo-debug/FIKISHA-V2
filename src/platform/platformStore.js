@@ -13,6 +13,7 @@ function createPlatformStore(spreadsheetId, lockFactory) {
   var lockProvider = lockFactory || function () { return LockService.getScriptLock(); };
   var companyHeaders = ["company_id", "name", "status", "drive_folder_id", "workbook_id", "onboarding_status", "created_at", "updated_at"];
   var memberHeaders = ["actor_id", "email", "company_id", "role", "status", "created_at", "updated_at"];
+  var platformAdminHeaders = ["actor_id", "email", "status", "created_at", "updated_at"];
   var jobHeaders = ["company_id", "status", "folder_id", "workbook_id", "step", "note", "error_code", "created_at", "updated_at"];
 
   function withLock(work) {
@@ -94,6 +95,16 @@ function createPlatformStore(spreadsheetId, lockFactory) {
     };
   }
 
+  function getPlatformAdminByEmail(email) {
+    var normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+    if (!normalizedEmail) return null;
+    var admin = findUnique(rows("PlatformAdmins", platformAdminHeaders), function (item) {
+      return typeof item.email === "string" && item.email.trim().toLowerCase() === normalizedEmail;
+    }, "DUPLICATE_PLATFORM_ADMIN_RECORD");
+    if (!admin) return null;
+    return { actor_id: admin.actor_id, email: admin.email, active: admin.status === "ACTIVE", status: admin.status, created_at: admin.created_at, updated_at: admin.updated_at };
+  }
+
   function getProvisioningJob(companyId) {
     var job = findUnique(rows("ProvisioningJobs", jobHeaders), function (item) {
       return item.company_id === companyId;
@@ -139,6 +150,7 @@ function createPlatformStore(spreadsheetId, lockFactory) {
   return Object.freeze({
     getCompany: getCompany,
     getMembershipByEmail: getMembershipByEmail,
+    getPlatformAdminByEmail: getPlatformAdminByEmail,
     getProvisioningJob: getProvisioningJob,
     saveProvisioningJob: saveProvisioningJob,
     updateCompanyResources: updateCompanyResources

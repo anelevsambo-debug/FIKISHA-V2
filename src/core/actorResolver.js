@@ -50,6 +50,19 @@ function createTrustedActorResolver(deps) {
     return actor;
   }
 
+  function resolvePlatformAdmin(invocationContext) {
+    if (typeof deps.membershipStore.getPlatformAdminByEmail !== "function") throw new FikishaError("PLATFORM_ADMIN_STORE_REQUIRED");
+    var email = normalizeEmail(deps.getAuthenticatedEmail(invocationContext));
+    if (!email) throw new FikishaError("AUTHENTICATED_IDENTITY_REQUIRED");
+    var admin = deps.membershipStore.getPlatformAdminByEmail(email);
+    if (!admin || normalizeEmail(admin.email) !== email) throw new FikishaError("PLATFORM_ADMIN_REQUIRED");
+    if (admin.active !== true) throw new FikishaError("ACTOR_INACTIVE");
+    if (typeof admin.actor_id !== "string" || !admin.actor_id.trim()) throw new FikishaError("PLATFORM_ADMIN_RECORD_INVALID");
+    var actor = Object.freeze({ actor_id: admin.actor_id, email: email, role: "DEVELOPER", active: true, platform_admin: true });
+    trustedActors.add(actor);
+    return actor;
+  }
+
   function assertTrusted(actor) {
     if (!actor || (typeof actor !== "object") || !trustedActors.has(actor)) {
       throw new FikishaError("UNTRUSTED_ACTOR_CONTEXT");
@@ -59,6 +72,7 @@ function createTrustedActorResolver(deps) {
 
   return Object.freeze({
     resolve: resolve,
+    resolvePlatformAdmin: resolvePlatformAdmin,
     isTrusted: function (actor) {
       return !!actor && typeof actor === "object" && trustedActors.has(actor);
     },

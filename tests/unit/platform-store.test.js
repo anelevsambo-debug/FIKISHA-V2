@@ -7,6 +7,7 @@ const path = require('node:path');
 const headers = {
   Companies: ['company_id', 'name', 'status', 'drive_folder_id', 'workbook_id', 'onboarding_status', 'created_at', 'updated_at'],
   CompanyMembers: ['actor_id', 'email', 'company_id', 'role', 'status', 'created_at', 'updated_at'],
+  PlatformAdmins: ['actor_id', 'email', 'status', 'created_at', 'updated_at'],
   ProvisioningJobs: ['company_id', 'status', 'folder_id', 'workbook_id', 'step', 'note', 'error_code', 'created_at', 'updated_at']
 };
 
@@ -120,6 +121,18 @@ test('duplicate membership records fail closed', () => {
     () => f.store.getMembershipByEmail('admin@example.test', 'CO-A'),
     error => error.code === 'DUPLICATE_MEMBERSHIP_RECORD'
   );
+});
+
+
+test('platform admin lookup is normalized and duplicate records fail closed', () => {
+  const f = fixture();
+  addRow(f.sheets.get('PlatformAdmins'), ['PLATFORM-1', 'RootAdmin@Example.test', 'ACTIVE', 'created', 'updated']);
+  const admin = f.store.getPlatformAdminByEmail(' rootadmin@example.test ');
+  assert.equal(admin.actor_id, 'PLATFORM-1');
+  assert.equal(admin.active, true);
+  addRow(f.sheets.get('PlatformAdmins'), ['PLATFORM-2', 'ROOTADMIN@example.test', 'ACTIVE', '', '']);
+  assert.throws(() => f.store.getPlatformAdminByEmail('rootadmin@example.test'),
+    error => error.code === 'DUPLICATE_PLATFORM_ADMIN_RECORD');
 });
 
 test('provisioning job upsert preserves its original creation timestamp', () => {

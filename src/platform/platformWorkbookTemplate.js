@@ -1,6 +1,7 @@
 var FikishaPlatformSchema = {
   Companies: ["company_id", "name", "status", "drive_folder_id", "workbook_id", "onboarding_status", "created_at", "updated_at"],
   CompanyMembers: ["actor_id", "email", "company_id", "role", "status", "created_at", "updated_at"],
+  PlatformAdmins: ["actor_id", "email", "status", "created_at", "updated_at"],
   ProvisioningJobs: ["company_id", "status", "folder_id", "workbook_id", "step", "note", "error_code", "created_at", "updated_at"]
 };
 
@@ -36,17 +37,17 @@ function initializePlatformWorkbook(spreadsheet) {
   var config = spreadsheet.getSheetByName("PlatformConfig");
   if (!config) config = spreadsheet.insertSheet("PlatformConfig");
   if (config.getLastRow() === 0) {
-    config.getRange(1, 1, 2, 2).setValues([["key", "value"], ["schema_version", "1"]]);
+    config.getRange(1, 1, 2, 2).setValues([["key", "value"], ["schema_version", "2"]]);
     config.setFrozenRows(1);
   } else {
     var rows = config.getRange(1, 1, config.getLastRow(), 2).getValues();
     var version = rows.find(function (row) { return row[0] === "schema_version"; });
-    if (!version || String(version[1]) !== "1") throw new FikishaError("PLATFORM_SCHEMA_VERSION_MISMATCH");
+    if (!version || String(version[1]) !== "2") throw new FikishaError("PLATFORM_SCHEMA_VERSION_MISMATCH");
   }
 
   return {
     spreadsheet_id: typeof spreadsheet.getId === "function" ? spreadsheet.getId() : "",
-    schema_version: "1",
+    schema_version: "2",
     sheets: Object.keys(FikishaPlatformSchema).concat(["PlatformConfig"])
   };
 }

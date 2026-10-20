@@ -19,7 +19,12 @@ function fixture() {
   const resolver = context.createTrustedActorResolver({
     getAuthenticatedEmail: invocation => identities.get(invocation) || '',
     membershipStore: {
-      getMembershipByEmail(email) { return memberships.get(email) || null; }
+      getMembershipByEmail(email) { return memberships.get(email) || null; },
+      getPlatformAdminByEmail(email) {
+        return email === 'platform-admin@example.test'
+          ? { actor_id: 'platform-admin-1', email: 'platform-admin@example.test', active: true }
+          : null;
+      }
     }
   });
   function invocation(email) {
@@ -74,6 +79,17 @@ test('developer role cannot be used as a company delivery actor', () => {
     () => f.resolver.resolve(f.invocation('developer@example.test'), 'CO-A'),
     error => error.code === 'ACTOR_ROLE_INVALID'
   );
+});
+
+
+test('platform admin resolution uses a separate trusted registry lookup', () => {
+  const f = fixture();
+  const actor = f.resolver.resolvePlatformAdmin(f.invocation('platform-admin@example.test'));
+  assert.equal(actor.actor_id, 'platform-admin-1');
+  assert.equal(actor.role, 'DEVELOPER');
+  assert.equal(actor.platform_admin, true);
+  assert.equal(actor.active, true);
+  assert.equal(f.resolver.isTrusted(actor), true);
 });
 
 test('caller-created actor objects are not trusted', () => {

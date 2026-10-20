@@ -9,11 +9,12 @@ The platform workbook adapter uses these server-controlled sheets:
 - Companies: company_id, name, status, drive_folder_id, workbook_id, onboarding_status, created_at, updated_at
 - CompanyMembers: actor_id, email, company_id, role, status, created_at, updated_at
 - ProvisioningJobs: company_id, status, folder_id, workbook_id, step, note, error_code, created_at, updated_at
-- PlatformConfig: key, value; schema_version is currently 1
+- PlatformAdmins: actor_id, email, status, created_at, updated_at
+- PlatformConfig: key, value; schema_version is currently 2
 
 The adapter validates headers, rejects duplicate company/membership/job keys, normalizes email for membership lookup, returns inactive membership as inactive, and upserts provisioning jobs without replacing their original creation timestamp. It can be injected into the actor resolver as its membership store.
 
-The non-destructive platform workbook initializer creates missing registry sheets and rejects incompatible headers or schema versions without clearing data. This is an initializer implementation, not a provisioned live platform workbook. A real trusted identity provider and a real platform workbook have not been configured or tested.
+The non-destructive platform workbook initializer creates missing registry sheets and rejects incompatible headers or schema versions without clearing data. PlatformAdmins is a separate server-controlled registry for platform-level provisioning permissions; a company membership does not grant platform-admin rights. This is an initializer implementation, not a provisioned live platform workbook. A real trusted identity provider and a real platform workbook have not been configured or tested.
 
 ## Required company workbook sheets
 - Deliveries: delivery_id, company_id, status, sender_name, sender_phone, recipient_name, recipient_phone, pickup_text, dropoff_text, instructions, consent_status, created_at, updated_at, created_by, version, last_operation_id, driver_id, proof_id, delivered_at, failure_reason

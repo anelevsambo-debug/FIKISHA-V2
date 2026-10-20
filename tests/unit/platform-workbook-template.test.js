@@ -68,13 +68,13 @@ test('empty platform workbook initializes the registry sheets and schema version
   const result = c.initializePlatformWorkbook(spreadsheet);
 
   assert.equal(result.spreadsheet_id, 'platform-test-id');
-  assert.equal(result.schema_version, '1');
-  assert.deepEqual(Array.from(result.sheets), ['Companies', 'CompanyMembers', 'ProvisioningJobs', 'PlatformConfig']);
+  assert.equal(result.schema_version, '2');
+  assert.deepEqual(Array.from(result.sheets), ['Companies', 'CompanyMembers', 'PlatformAdmins', 'ProvisioningJobs', 'PlatformConfig']);
   assert.deepEqual(spreadsheet.getSheetByName('CompanyMembers').getRange(1, 1, 1, 7).getValues(), [
     ['actor_id', 'email', 'company_id', 'role', 'status', 'created_at', 'updated_at']
   ]);
   assert.deepEqual(spreadsheet.getSheetByName('PlatformConfig').getRange(1, 1, 2, 2).getValues(), [
-    ['key', 'value'], ['schema_version', '1']
+    ['key', 'value'], ['schema_version', '2']
   ]);
 });
 
@@ -116,7 +116,7 @@ test('old or missing platform schema version fails closed', () => {
   const spreadsheet = makeSpreadsheet();
   c.initializePlatformWorkbook(spreadsheet);
   const config = spreadsheet.getSheetByName('PlatformConfig');
-  config.getRange(2, 2, 1, 1).setValues([['0']]);
+  config.getRange(2, 2, 1, 1).setValues([['1']]);
 
   assert.throws(
     () => c.initializePlatformWorkbook(spreadsheet),
