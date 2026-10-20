@@ -1,0 +1,1 @@
+function FikishaError(code,message){this.name="FikishaError";this.code=code||"INTERNAL_ERROR";this.message=message||"The request could not be completed.";} FikishaError.prototype=Object.create(Error.prototype); FikishaError.prototype.constructor=FikishaError;
