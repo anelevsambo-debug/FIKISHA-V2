@@ -111,9 +111,8 @@ function createProofOfDeliveryService(deps) {
       if (!recipientFingerprint || !delivery.recipient_phone) throw new FikishaError("RECIPIENT_CONTACT_UNAVAILABLE");
       var time = now();
       store.listChallengesForDelivery(delivery.delivery_id).forEach(function (prior) {
-        if (prior.status === "ACTIVE" || prior.status === "COMPLETING") {
-          store.invalidateChallenge(prior.challenge_id, "SUPERSEDED", iso(time));
-        }
+        if (prior.status === "COMPLETING") throw new FikishaError("PROOF_COMPLETION_RECOVERY_REQUIRED");
+        if (prior.status === "ACTIVE") store.invalidateChallenge(prior.challenge_id, "SUPERSEDED", iso(time));
       });
       var code = String(deps.randomCode());
       if (!/^\\d{6}$/.test(code)) throw new FikishaError("OTP_GENERATOR_INVALID");
