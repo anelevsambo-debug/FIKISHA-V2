@@ -94,6 +94,7 @@ function fixture(options = {}) {
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/core/errors.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/core/validators.js'), 'utf8'), context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/core/actorResolver.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/companies/provisioning.js'), 'utf8'), context);
 
   const platform = {
@@ -108,24 +109,47 @@ function fixture(options = {}) {
       this.resources = Object.assign({}, resources);
     }
   };
+  const identities = new WeakMap();
+  const actorResolver = context.createTrustedActorResolver({
+    getAuthenticatedEmail: invocation => identities.get(invocation) || '',
+    membershipStore: {
+      getMembershipByEmail(email) {
+        return email === 'company-admin@example.test'
+          ? { actor_id: 'COMPANY-ADMIN', email: email, company_id: 'CO-A', role: 'COMPANY_ADMIN', active: true }
+          : null;
+      },
+      getPlatformAdminByEmail(email) {
+        return email === 'platform-admin@example.test'
+          ? { actor_id: 'PLATFORM-ADMIN', email: email, active: true }
+          : null;
+      }
+    }
+  });
+  const adminInvocation = {};
+  identities.set(adminInvocation, 'platform-admin@example.test');
+  const admin = actorResolver.resolvePlatformAdmin(adminInvocation);
+  const companyInvocation = {};
+  identities.set(companyInvocation, 'company-admin@example.test');
+  const companyAdmin = actorResolver.resolve(companyInvocation, 'CO-A');
+
   const provisioner = context.createCompanyProvisioner({
     platformStore: platform,
+    platformActorResolver: actorResolver,
     templateSpreadsheetId: 'template',
     rootFolderId: 'root',
     initializeWorkbook(spreadsheet, company) {
       if (!spreadsheet || company.company_id !== 'CO-A') throw new Error('unexpected initializer arguments');
     }
   });
-  return { context, platform, provisioner, root, folders, files, workbooks, template, workbook };
+  return { context, platform, provisioner, root, folders, files, workbooks, template, workbook, admin, companyAdmin };
 }
 
-const admin = { actor_id: 'platform-admin', role: 'DEVELOPER', active: true, platform_admin: true };
 const folderMarker = 'FIKISHA-V2|company_id=CO-A|resource=operations-folder';
 const workbookMarker = 'FIKISHA-V2|company_id=CO-A|resource=operations-workbook';
 
 test('provisioner creates marked resources and persists completion state', () => {
   const f = fixture();
-  const result = f.provisioner.provision('CO-A', admin);
+  const result = f.provisioner.provision('CO-A', f.admin);
 
   assert.equal(result.status, 'NEEDS_OWNER_ACTION');
   assert.equal(result.drive_folder_id, 'folder-1');
@@ -145,7 +169,7 @@ test('provisioner reuses uniquely marked resources after a lost job reference', 
     job: { company_id: 'CO-A', status: 'FAILED', step: 'STARTED', created_at: '2026-10-01T00:00:00.000Z' }
   });
 
-  const result = f.provisioner.provision('CO-A', admin);
+  const result = f.provisioner.provision('CO-A', f.admin);
 
   assert.equal(result.drive_folder_id, 'folder-existing');
   assert.equal(result.workbook_id, 'file-existing');
@@ -158,7 +182,7 @@ test('provisioner fails closed on an unmarked same-name folder', () => {
   const f = fixture({ existingFolder: true, existingFolderDescription: 'unrelated resource' });
 
   assert.throws(
-    () => f.provisioner.provision('CO-A', admin),
+    () => f.provisioner.provision('CO-A', f.admin),
     error => error.code === 'PROVISIONING_RESOURCE_IDENTITY_MISMATCH'
   );
   assert.equal(f.root.folders.length, 1);
@@ -170,7 +194,7 @@ test('provisioner fails closed on duplicate same-name folders', () => {
   duplicate.setDescription(folderMarker);
 
   assert.throws(
-    () => f.provisioner.provision('CO-A', admin),
+    () => f.provisioner.provision('CO-A', f.admin),
     error => error.code === 'DUPLICATE_PROVISIONING_FOLDER'
   );
   assert.equal(f.root.folders.length, 2);
@@ -179,7 +203,11 @@ test('provisioner fails closed on duplicate same-name folders', () => {
 test('provisioner rejects a non-platform administrator', () => {
   const f = fixture();
   assert.throws(
-    () => f.provisioner.provision('CO-A', { actor_id: 'user', role: 'COMPANY_ADMIN', active: true }),
+    () => f.provisioner.provision('CO-A', { actor_id: 'user', role: 'DEVELOPER', active: true, platform_admin: true }),
+    error => error.code === 'UNTRUSTED_ACTOR_CONTEXT'
+  );
+  assert.throws(
+    () => f.provisioner.provision('CO-A', f.companyAdmin),
     error => error.code === 'PLATFORM_ADMIN_REQUIRED'
   );
 });

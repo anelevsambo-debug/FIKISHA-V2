@@ -4,7 +4,9 @@
  * the company identity from the platform store (never directly from a client payload).
  */
 function createCompanyProvisioner(deps) {
-  if (!deps || !deps.platformStore || !deps.templateSpreadsheetId || !deps.rootFolderId) {
+  if (!deps || !deps.platformStore || !deps.platformActorResolver ||
+      typeof deps.platformActorResolver.assertTrusted !== "function" ||
+      !deps.templateSpreadsheetId || !deps.rootFolderId) {
     throw new FikishaError("PROVISIONER_CONFIGURATION_REQUIRED");
   }
   if (typeof DriveApp === "undefined" || typeof SpreadsheetApp === "undefined") {
@@ -44,6 +46,7 @@ function createCompanyProvisioner(deps) {
   }
 
   function provision(companyId, actor) {
+    deps.platformActorResolver.assertTrusted(actor);
     if (!actor || actor.active !== true || actor.role !== "DEVELOPER" || actor.platform_admin !== true) {
       throw new FikishaError("PLATFORM_ADMIN_REQUIRED");
     }
