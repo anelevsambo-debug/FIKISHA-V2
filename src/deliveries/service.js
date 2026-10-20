@@ -47,6 +47,35 @@ function createDeliveryService(deps) {
       delivery.consent_status === input.consent_status;
   }
 
+  function enqueueTransitionNotification(event, operationId) {
+    if (typeof store.enqueueNotification !== "function") return;
+    store.enqueueNotification({
+      notification_id: "transition:" + operationId,
+      company_id: event.company_id,
+      delivery_id: event.delivery_id,
+      event_id: event.event_id,
+      recipient_actor_id: "",
+      channel: "INTERNAL",
+      template_key: "DELIVERY_STATE_CHANGED",
+      payload_json: JSON.stringify({
+        event_id: event.event_id,
+        delivery_id: event.delivery_id,
+        event_type: event.event_type,
+        from_status: event.from_status,
+        to_status: event.to_status,
+        actor_id: event.actor_id
+      }),
+      status: "PENDING",
+      attempt_count: 0,
+      next_attempt_at: "",
+      lease_until: "",
+      last_error_code: "",
+      provider_message_id: "",
+      created_at: event.created_at,
+      updated_at: event.created_at
+    });
+  }
+
   function resumeCreate(key, record) {
     var delivery = record && record.delivery;
     var event = record && record.event;
@@ -64,6 +93,7 @@ function createDeliveryService(deps) {
     }
 
     store.ensureEvent(event);
+    enqueueTransitionNotification(event, delivery.last_operation_id || record.operation_id || delivery.delivery_id);
     var completedAt = deps.clock().toISOString();
     store.completeIdempotency(key, {
       state: "COMPLETED",
@@ -199,6 +229,7 @@ function createDeliveryService(deps) {
     }
 
     store.ensureEvent(record.event);
+    enqueueTransitionNotification(record.event, record.operation_id);
     var completedAt = deps.clock().toISOString();
     store.completeIdempotency(key, {
       state: "COMPLETED",
@@ -227,6 +258,14 @@ function createDeliveryService(deps) {
     var current = store.getDelivery(args.delivery_id);
     if (!current) throw new FikishaError("DELIVERY_NOT_FOUND");
     actorCheck(actor, current.company_id);
+    if (args.action === "ACCEPT_OFFER" && (!actor || actor.role !== "DRIVER" || args.driver_id !== actor.actor_id)) {
+      throw new FikishaError("OFFER_DRIVER_MISMATCH");
+    }
+    if (actor && actor.role === "DRIVER" &&
+        ["CONFIRM_COLLECTION", "START_TRANSIT", "ATTEMPT_DELIVERY", "VERIFY_OTP", "FAIL_DELIVERY"].indexOf(args.action) >= 0 &&
+        current.driver_id !== actor.actor_id) {
+      throw new FikishaError("ASSIGNED_DRIVER_REQUIRED");
+    }
 
     var key = actor.company_id + ":TRANSITION:" + args.idempotency_key;
     var prior = store.getIdempotency(key);
