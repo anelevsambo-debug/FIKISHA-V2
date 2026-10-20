@@ -2,7 +2,7 @@
 
 Each company is intended to have a separate operational workbook, Drive evidence folder and Company Admin AppSheet app. Platform metadata should remain separate from delivery records.
 
-The delivery service rejects caller-created actor objects and checks active membership, company ID and role through the trusted actor resolver contract. The platform registry adapter reads company membership from a controlled CompanyMembers sheet and rejects duplicate membership records. The Sheets adapter is constructed with a specific workbook ID rather than accepting an arbitrary workbook ID from a request. The real identity provider and live platform workbook are not connected or verified.
+The delivery service rejects caller-created actor objects and checks active membership, company ID and role through the trusted actor resolver contract. The platform registry adapter reads company membership from a controlled CompanyMembers sheet and rejects duplicate membership records. Platform-wide provisioning uses a separate PlatformAdmins registry and requires a resolver-branded platform-admin actor; a company-admin actor is not sufficient. The Sheets adapter is constructed with a specific workbook ID rather than accepting an arbitrary workbook ID from a request. The real identity provider and live platform workbook are not connected or verified.
 
 No live Google accounts, company workbooks or AppSheet apps have been provisioned and tested. Code-level checks do not establish live tenant isolation. The central Apps Script owner can still access all workbooks shared with that account.
 
