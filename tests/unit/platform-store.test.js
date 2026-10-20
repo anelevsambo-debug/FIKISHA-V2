@@ -35,12 +35,12 @@ function makeSheet(firstRow) {
   };
 }
 
-function fixture() {
+function fixture(options = {}) {
   const sheets = new Map(Object.entries(headers).map(([name, row]) => [name, makeSheet(row)]));
   const spreadsheet = { getSheetByName: name => sheets.get(name) || null };
   const context = vm.createContext({
     SpreadsheetApp: { openById: () => spreadsheet },
-    LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) }
+    LockService: { getScriptLock: () => options.lockFactory ? options.lockFactory() : ({ waitLock() {}, releaseLock() {} }) }
   });
   for (const file of ['errors.js', 'platformStore.js', 'actorResolver.js']) {
     const p = file === 'errors.js' || file === 'actorResolver.js'
@@ -48,7 +48,7 @@ function fixture() {
       : path.join(__dirname, '../../src/platform', file);
     vm.runInContext(fs.readFileSync(p, 'utf8'), context);
   }
-  const store = context.createPlatformStore('platform-workbook');
+  const store = context.createPlatformStore('platform-workbook', options.lockFactory, options.logger);
   return { context, store, sheets };
 }
 
@@ -168,4 +168,32 @@ test('resource update preserves company status and updates only configured resou
   assert.equal(result.drive_folder_id, 'folder-1');
   assert.equal(result.workbook_id, 'sheet-1');
   assert.equal(result.onboarding_status, 'NEEDS_OWNER_ACTION');
+});
+
+
+test('platform runExclusive reuses its lock for nested provisioning-job writes', () => {
+  let acquisitions = 0;
+  let releases = 0;
+  const f = fixture({
+    lockFactory: () => ({
+      waitLock(timeoutMs) {
+        acquisitions += 1;
+        assert.equal(timeoutMs, 10000);
+      },
+      releaseLock() { releases += 1; }
+    })
+  });
+
+  f.store.runExclusive(() => {
+    f.store.saveProvisioningJob({
+      company_id: 'CO-LOCK', status: 'PROVISIONING', step: 'STARTED'
+    });
+    f.store.updateCompanyResources('CO-LOCK', {
+      drive_folder_id: 'folder-lock',
+      workbook_id: 'workbook-lock'
+    });
+  });
+
+  assert.equal(acquisitions, 1);
+  assert.equal(releases, 1);
 });
