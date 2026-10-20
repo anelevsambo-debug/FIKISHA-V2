@@ -80,9 +80,17 @@ function createWhatsAppIntegration(deps) {
       var key = eventKey(event);
       // The store must enforce uniqueness under a durable lock/transaction. A check-then-insert
       // implementation without atomic uniqueness is not sufficient for concurrent deliveries.
-      var result = store.recordWebhookEventUnique(key, event);
-      if (!result || !["CREATED", "DUPLICATE"].includes(result.status)) fail("WEBHOOK_EVENT_PERSISTENCE_FAILED");
-      if (event.kind === "status") applyStatusEvent(event);
+      var result;
+      try { result = store.recordWebhookEventUnique(key, event); }
+      catch (ignored) { safeLog("event_persist_failed", "WEBHOOK_EVENT_PERSISTENCE_FAILED"); fail("WEBHOOK_EVENT_PERSISTENCE_FAILED"); }
+      if (!result || !["CREATED", "DUPLICATE"].includes(result.status)) {
+        safeLog("event_persist_failed", "WEBHOOK_EVENT_PERSISTENCE_FAILED");
+        fail("WEBHOOK_EVENT_PERSISTENCE_FAILED");
+      }
+      if (event.kind === "status") {
+        try { applyStatusEvent(event); }
+        catch (ignored) { safeLog("event_process_failed", "WEBHOOK_EVENT_PROCESSING_FAILED"); fail("WEBHOOK_EVENT_PROCESSING_FAILED"); }
+      }
       results.push({ event_key: key, status: result.status });
     });
     safeLog("webhook_accepted", "WEBHOOK_EVENTS_RECORDED");
