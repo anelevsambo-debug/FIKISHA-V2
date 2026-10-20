@@ -74,7 +74,7 @@ test('empty company workbook initializes the required tabs and company identity'
   assert.equal(result.company_id, 'company-a');
   assert.equal(result.spreadsheet_id, 'test-spreadsheet-id');
   assert.deepEqual(Array.from(result.sheets), [
-    'Deliveries', 'DeliveryEvents', 'Idempotency', 'ProofOfDelivery', 'Drivers', 'DriverOffers', 'NotificationOutbox', 'CompanyConfig'
+    'Deliveries', 'DeliveryEvents', 'Idempotency', 'ProofOfDelivery', 'Drivers', 'DriverOffers', 'NotificationOutbox', 'ProofChallenges', 'ProofEvidence', 'CompanyConfig'
   ]);
   assert.deepEqual(spreadsheet.getSheetByName('Deliveries').getRange(1, 1, 1, 3).getValues(), [
     ['delivery_id', 'company_id', 'status']
@@ -98,7 +98,7 @@ test('re-running initialization preserves existing delivery data', () => {
   c.initializeCompanyWorkbook(spreadsheet, { company_id: 'company-a' });
 
   assert.deepEqual(deliveries.getRange(2, 1, 1, row.length).getValues(), [row]);
-  assert.equal(spreadsheet._sheets.size, 8);
+  assert.equal(spreadsheet._sheets.size, 10);
 });
 
 test('incompatible existing schema fails closed without overwriting its data', () => {

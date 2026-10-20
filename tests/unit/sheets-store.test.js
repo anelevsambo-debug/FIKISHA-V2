@@ -11,7 +11,9 @@ const headers = {
   ProofOfDelivery: ['proof_id', 'delivery_id', 'company_id', 'verified', 'created_at'],
   Drivers: ['driver_id', 'company_id', 'status'],
   DriverOffers: ['offer_id', 'company_id', 'delivery_id', 'driver_id', 'status', 'expires_at', 'created_at', 'responded_at', 'response_actor_id', 'request_key', 'attempt_number'],
-  NotificationOutbox: ['notification_id', 'company_id', 'delivery_id', 'event_id', 'recipient_actor_id', 'channel', 'template_key', 'payload_json', 'status', 'attempt_count', 'next_attempt_at', 'lease_until', 'last_error_code', 'provider_message_id', 'created_at', 'updated_at']
+  NotificationOutbox: ['notification_id', 'company_id', 'delivery_id', 'event_id', 'recipient_actor_id', 'channel', 'template_key', 'payload_json', 'status', 'attempt_count', 'next_attempt_at', 'lease_until', 'last_error_code', 'provider_message_id', 'created_at', 'updated_at'],
+  ProofChallenges: ['challenge_id', 'company_id', 'delivery_id', 'issued_to_fingerprint', 'issued_by_driver_id', 'otp_mac', 'status', 'attempt_count', 'max_attempts', 'expires_at', 'created_at', 'consumed_at', 'invalidated_at', 'invalidation_reason', 'proof_id', 'completion_request_key', 'evidence_ids_json', 'updated_at'],
+  ProofEvidence: ['evidence_id', 'company_id', 'delivery_id', 'challenge_id', 'drive_file_id', 'evidence_type', 'mime_type', 'parent_folder_id', 'uploaded_by_actor_id', 'verified', 'created_at']
 };
 
 function makeSheet(name, firstRow) {
@@ -317,4 +319,61 @@ test('notification outbox deduplicates enqueue and claims due work once', () => 
   assert.equal(claimed.attempt_count, 1);
   assert.equal(f.store.claimNotification('N-1', '2026-10-20T00:00:02.000Z', '2026-10-20T00:01:02.000Z'), null);
   assert.equal(f.sheets.get('NotificationOutbox')._data.length, 2);
+});
+
+
+test('proof verification requires a globally unique proof, completing challenge and linked delivery photo', () => {
+  const f = fixture();
+  const challenge = {
+    challenge_id: 'CH-1', company_id: 'CO-A', delivery_id: 'D-1',
+    issued_to_fingerprint: 'recipient-mac', issued_by_driver_id: 'DR-1', otp_mac: 'otp-mac',
+    status: 'COMPLETING', attempt_count: 0, max_attempts: 5, expires_at: '2026-10-20T00:05:00.000Z',
+    created_at: '2026-10-20T00:00:00.000Z', consumed_at: '', invalidated_at: '', invalidation_reason: '',
+    proof_id: 'P-1', completion_request_key: 'req-1', evidence_ids_json: '["EV-1"]', updated_at: '2026-10-20T00:00:00.000Z'
+  };
+  f.store.createChallenge(challenge);
+  f.store.registerProofEvidence({
+    evidence_id: 'EV-1', company_id: 'CO-A', delivery_id: 'D-1', challenge_id: 'CH-1',
+    drive_file_id: 'FILE-1', evidence_type: 'DELIVERY_PHOTO', mime_type: 'image/jpeg',
+    parent_folder_id: 'FOLDER-1', uploaded_by_actor_id: 'DR-1', verified: true, created_at: '2026-10-20T00:00:00.000Z'
+  });
+  f.store.createProofRecord({ proof_id: 'P-1', delivery_id: 'D-1', company_id: 'CO-A', verified: true, created_at: '2026-10-20T00:00:00.000Z' });
+  assert.equal(f.store.isProofVerified('P-1', 'D-1', 'CO-A'), true);
+  assert.equal(f.store.isProofVerified('P-1', 'D-2', 'CO-A'), false);
+  const evidence = f.sheets.get('ProofEvidence')._data[1];
+  evidence[2] = 'D-2';
+  assert.equal(f.store.isProofVerified('P-1', 'D-1', 'CO-A'), false);
+});
+
+test('duplicate proof identifiers across deliveries fail closed', () => {
+  const f = fixture();
+  const challenge = {
+    challenge_id: 'CH-1', company_id: 'CO-A', delivery_id: 'D-1', issued_to_fingerprint: 'mac',
+    issued_by_driver_id: 'DR-1', otp_mac: 'mac', status: 'COMPLETING', attempt_count: 0, max_attempts: 5,
+    expires_at: '2026-10-20T00:05:00.000Z', created_at: '2026-10-20T00:00:00.000Z',
+    consumed_at: '', invalidated_at: '', invalidation_reason: '', proof_id: 'P-SHARED',
+    completion_request_key: 'req-1', evidence_ids_json: '["EV-1"]', updated_at: '2026-10-20T00:00:00.000Z'
+  };
+  f.store.createChallenge(challenge);
+  f.store.registerProofEvidence({
+    evidence_id: 'EV-1', company_id: 'CO-A', delivery_id: 'D-1', challenge_id: 'CH-1',
+    drive_file_id: 'FILE-1', evidence_type: 'DELIVERY_PHOTO', mime_type: 'image/jpeg',
+    parent_folder_id: 'FOLDER-1', uploaded_by_actor_id: 'DR-1', verified: true, created_at: '2026-10-20T00:00:00.000Z'
+  });
+  f.store.createProofRecord({ proof_id: 'P-SHARED', delivery_id: 'D-1', company_id: 'CO-A', verified: true, created_at: '2026-10-20T00:00:00.000Z' });
+  f.sheets.get('ProofOfDelivery').appendRow(['P-SHARED', 'D-2', 'CO-B', true, '2026-10-20T00:00:00.000Z']);
+  assert.throws(() => f.store.isProofVerified('P-SHARED', 'D-1', 'CO-A'), error => error.code === 'DUPLICATE_PROOF_RECORD');
+});
+
+test('the same Drive file cannot be registered to another challenge, even in the same delivery', () => {
+  const f = fixture();
+  const evidence = {
+    evidence_id: 'EV-1', company_id: 'CO-A', delivery_id: 'D-1', challenge_id: 'CH-1',
+    drive_file_id: 'FILE-1', evidence_type: 'DELIVERY_PHOTO', mime_type: 'image/jpeg',
+    parent_folder_id: 'FOLDER-1', uploaded_by_actor_id: 'DR-1', verified: true, created_at: '2026-10-20T00:00:00.000Z'
+  };
+  f.store.registerProofEvidence(evidence);
+  assert.throws(() => f.store.registerProofEvidence(Object.assign({}, evidence, {
+    evidence_id: 'EV-2', challenge_id: 'CH-2'
+  })), error => error.code === 'DRIVE_EVIDENCE_REUSE_DENIED');
 });

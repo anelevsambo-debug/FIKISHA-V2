@@ -5,7 +5,9 @@ var FikishaCompanySchema={
   ProofOfDelivery:["proof_id","delivery_id","company_id","verified","created_at"],
   Drivers:["driver_id","company_id","status"],
   DriverOffers:["offer_id","company_id","delivery_id","driver_id","status","expires_at","created_at","responded_at","response_actor_id","request_key","attempt_number"],
-  NotificationOutbox:["notification_id","company_id","delivery_id","event_id","recipient_actor_id","channel","template_key","payload_json","status","attempt_count","next_attempt_at","lease_until","last_error_code","provider_message_id","created_at","updated_at"]
+  NotificationOutbox:["notification_id","company_id","delivery_id","event_id","recipient_actor_id","channel","template_key","payload_json","status","attempt_count","next_attempt_at","lease_until","last_error_code","provider_message_id","created_at","updated_at"],
+  ProofChallenges:["challenge_id","company_id","delivery_id","issued_to_fingerprint","issued_by_driver_id","otp_mac","status","attempt_count","max_attempts","expires_at","created_at","consumed_at","invalidated_at","invalidation_reason","proof_id","completion_request_key","evidence_ids_json","updated_at"],
+  ProofEvidence:["evidence_id","company_id","delivery_id","challenge_id","drive_file_id","evidence_type","mime_type","parent_folder_id","uploaded_by_actor_id","verified","created_at"]
 };
 /**
  * Idempotent structural initialization only. It does not grant access or create an AppSheet app.

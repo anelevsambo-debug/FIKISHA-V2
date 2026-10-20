@@ -72,6 +72,8 @@ function createSheetsStore(spreadsheetId, lockFactory, logger) {
   var idempotencyHeaders = ["key", "result_json", "created_at"];
   var offerHeaders = ["offer_id", "company_id", "delivery_id", "driver_id", "status", "expires_at", "created_at", "responded_at", "response_actor_id", "request_key", "attempt_number"];
   var outboxHeaders = ["notification_id", "company_id", "delivery_id", "event_id", "recipient_actor_id", "channel", "template_key", "payload_json", "status", "attempt_count", "next_attempt_at", "lease_until", "last_error_code", "provider_message_id", "created_at", "updated_at"];
+  var challengeHeaders = ["challenge_id", "company_id", "delivery_id", "issued_to_fingerprint", "issued_by_driver_id", "otp_mac", "status", "attempt_count", "max_attempts", "expires_at", "created_at", "consumed_at", "invalidated_at", "invalidation_reason", "proof_id", "completion_request_key", "evidence_ids_json", "updated_at"];
+  var proofEvidenceHeaders = ["evidence_id", "company_id", "delivery_id", "challenge_id", "drive_file_id", "evidence_type", "mime_type", "parent_folder_id", "uploaded_by_actor_id", "verified", "created_at"];
 
   function parseIdempotencyRecord(row) {
     try { return JSON.parse(row.result_json); }
@@ -353,9 +355,141 @@ function createSheetsStore(spreadsheetId, lockFactory, logger) {
     completeIdempotency: completeIdempotency,
     saveIdempotency: saveIdempotency,
     isProofVerified: function (proofId, deliveryId, companyId) {
-      return rows("ProofOfDelivery", ["proof_id", "delivery_id", "company_id", "verified", "created_at"]).some(function (row) {
-        return row.proof_id === proofId && row.delivery_id === deliveryId && row.company_id === companyId && String(row.verified).toUpperCase() === "TRUE";
+      var proofs = rows("ProofOfDelivery", ["proof_id", "delivery_id", "company_id", "verified", "created_at"]);
+      var proof = findUnique(proofs, function (row) { return row.proof_id === proofId; }, "DUPLICATE_PROOF_RECORD");
+      if (!proof || proof.delivery_id !== deliveryId || proof.company_id !== companyId ||
+          String(proof.verified).toUpperCase() !== "TRUE") return false;
+      var challenge = findUnique(rows("ProofChallenges", challengeHeaders), function (row) {
+        return row.proof_id === proofId;
+      }, "DUPLICATE_PROOF_CHALLENGE");
+      if (!challenge || challenge.delivery_id !== deliveryId || challenge.company_id !== companyId ||
+          (challenge.status !== "COMPLETING" && challenge.status !== "CONSUMED")) return false;
+      var evidenceIds;
+      try { evidenceIds = JSON.parse(challenge.evidence_ids_json || "[]"); } catch (error) { return false; }
+      if (!Array.isArray(evidenceIds) || evidenceIds.length < 1 ||
+          new Set(evidenceIds).size !== evidenceIds.length) return false;
+      var evidenceRows = rows("ProofEvidence", proofEvidenceHeaders);
+      return evidenceIds.every(function (id) {
+        var evidence = findUnique(evidenceRows, function (row) { return row.evidence_id === id; }, "DUPLICATE_PROOF_EVIDENCE");
+        return !!evidence && evidence.delivery_id === deliveryId && evidence.company_id === companyId &&
+          evidence.challenge_id === challenge.challenge_id && String(evidence.verified).toUpperCase() === "TRUE";
+      }) && evidenceIds.some(function (id) {
+        var evidence = findUnique(evidenceRows, function (row) { return row.evidence_id === id; }, "DUPLICATE_PROOF_EVIDENCE");
+        return evidence && evidence.delivery_id === deliveryId && evidence.company_id === companyId &&
+          evidence.challenge_id === challenge.challenge_id && evidence.evidence_type === "DELIVERY_PHOTO" &&
+          String(evidence.verified).toUpperCase() === "TRUE";
       });
+    },
+    getChallenge: function (challengeId) {
+      return findUnique(rows("ProofChallenges", challengeHeaders), function (row) {
+        return row.challenge_id === challengeId;
+      }, "DUPLICATE_PROOF_CHALLENGE");
+    },
+    listChallengesForDelivery: function (deliveryId) {
+      return rows("ProofChallenges", challengeHeaders).filter(function (row) { return row.delivery_id === deliveryId; });
+    },
+    createChallenge: function (challenge) {
+      return withLock(function () {
+        var all = rows("ProofChallenges", challengeHeaders);
+        if (findUnique(all, function (row) { return row.challenge_id === challenge.challenge_id; }, "DUPLICATE_PROOF_CHALLENGE")) {
+          throw new FikishaError("PROOF_CHALLENGE_ID_CONFLICT");
+        }
+        sheet("ProofChallenges", challengeHeaders).appendRow(challengeHeaders.map(function (h) {
+          return challenge[h] === undefined ? "" : challenge[h];
+        }));
+        return challenge;
+      });
+    },
+    updateChallenge: function (challenge, expectedStatus) {
+      return withLock(function () {
+        var all = rows("ProofChallenges", challengeHeaders);
+        var matches = all.map(function (row, index) { return { row: row, index: index }; })
+          .filter(function (item) { return item.row.challenge_id === challenge.challenge_id; });
+        if (matches.length > 1) throw new FikishaError("DUPLICATE_PROOF_CHALLENGE");
+        if (!matches.length) throw new FikishaError("PROOF_CHALLENGE_NOT_FOUND");
+        if (expectedStatus && matches[0].row.status !== expectedStatus) throw new FikishaError("PROOF_CHALLENGE_STATUS_CONFLICT");
+        if (matches[0].row.delivery_id !== challenge.delivery_id || matches[0].row.company_id !== challenge.company_id) {
+          throw new FikishaError("PROOF_CHALLENGE_BINDING_CONFLICT");
+        }
+        sheet("ProofChallenges", challengeHeaders).getRange(matches[0].index + 2, 1, 1, challengeHeaders.length).setValues([challengeHeaders.map(function (h) {
+          return challenge[h] === undefined ? "" : challenge[h];
+        })]);
+        return challenge;
+      });
+    },
+    invalidateChallenge: function (challengeId, reason, at) {
+      return withLock(function () {
+        var challenge = findUnique(rows("ProofChallenges", challengeHeaders), function (row) {
+          return row.challenge_id === challengeId;
+        }, "DUPLICATE_PROOF_CHALLENGE");
+        if (!challenge) throw new FikishaError("PROOF_CHALLENGE_NOT_FOUND");
+        if (challenge.status === "CONSUMED" || challenge.status === "INVALIDATED") return challenge;
+        if (challenge.status === "COMPLETING") throw new FikishaError("PROOF_COMPLETION_RECOVERY_REQUIRED");
+        challenge.status = "INVALIDATED";
+        challenge.invalidated_at = at;
+        challenge.invalidation_reason = reason;
+        challenge.updated_at = at;
+        var all = rows("ProofChallenges", challengeHeaders);
+        var matches = all.map(function (row, index) { return { row: row, index: index }; })
+          .filter(function (item) { return item.row.challenge_id === challengeId; });
+        sheet("ProofChallenges", challengeHeaders).getRange(matches[0].index + 2, 1, 1, challengeHeaders.length).setValues([challengeHeaders.map(function (h) {
+          return challenge[h] === undefined ? "" : challenge[h];
+        })]);
+        return challenge;
+      });
+    },
+    registerProofEvidence: function (evidence) {
+      return withLock(function () {
+        var all = rows("ProofEvidence", proofEvidenceHeaders);
+        var existing = findUnique(all, function (row) { return row.evidence_id === evidence.evidence_id; }, "DUPLICATE_PROOF_EVIDENCE");
+        if (existing) {
+          if (existing.company_id !== evidence.company_id || existing.delivery_id !== evidence.delivery_id ||
+              existing.challenge_id !== evidence.challenge_id || existing.drive_file_id !== evidence.drive_file_id) {
+            throw new FikishaError("PROOF_EVIDENCE_ID_CONFLICT");
+          }
+          return existing;
+        }
+        if (all.some(function (row) { return row.drive_file_id === evidence.drive_file_id; })) {
+          throw new FikishaError("DRIVE_EVIDENCE_REUSE_DENIED");
+        }
+        sheet("ProofEvidence", proofEvidenceHeaders).appendRow(proofEvidenceHeaders.map(function (h) {
+          return evidence[h] === undefined ? "" : evidence[h];
+        }));
+        return evidence;
+      });
+    },
+    getProofEvidence: function (evidenceId) {
+      var row = findUnique(rows("ProofEvidence", proofEvidenceHeaders), function (value) {
+        return value.evidence_id === evidenceId;
+      }, "DUPLICATE_PROOF_EVIDENCE");
+      if (!row) return null;
+      row.verified = String(row.verified).toUpperCase() === "TRUE" || row.verified === true;
+      return row;
+    },
+    listProofEvidence: function (deliveryId) {
+      return rows("ProofEvidence", proofEvidenceHeaders).filter(function (row) { return row.delivery_id === deliveryId; });
+    },
+    createProofRecord: function (proof) {
+      return withLock(function () {
+        var headers = ["proof_id", "delivery_id", "company_id", "verified", "created_at"];
+        var all = rows("ProofOfDelivery", headers);
+        var existing = findUnique(all, function (row) { return row.proof_id === proof.proof_id; }, "DUPLICATE_PROOF_RECORD");
+        if (existing) {
+          if (existing.delivery_id !== proof.delivery_id || existing.company_id !== proof.company_id) {
+            throw new FikishaError("PROOF_RECORD_CONFLICT");
+          }
+          return existing;
+        }
+        sheet("ProofOfDelivery", headers).appendRow(headers.map(function (h) {
+          return h === "verified" ? true : (proof[h] === undefined ? "" : proof[h]);
+        }));
+        return proof;
+      });
+    },
+    getProofRecord: function (proofId) {
+      return findUnique(rows("ProofOfDelivery", ["proof_id", "delivery_id", "company_id", "verified", "created_at"]), function (row) {
+        return row.proof_id === proofId;
+      }, "DUPLICATE_PROOF_RECORD");
     },
     isActiveDriver: function (driverId, companyId) {
       return rows("Drivers", ["driver_id", "company_id", "status"]).some(function (row) {

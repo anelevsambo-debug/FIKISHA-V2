@@ -14,7 +14,7 @@
 | FVK-01 | Critical | No authenticated operational entrypoint or trusted actor resolution is connected to a real identity source. | CONFIRMED | IN PROGRESS | Resolver contract and platform membership adapter are implemented; trusted identity provider, live platform workbook, authenticated entrypoint and Apps Script/runtime verification remain. |
 | FVK-02 | Critical | Tenant isolation is helper-level, not end-to-end verified. | PARTIALLY CONFIRMED | BLOCKED for live verification | Cross-company positive/negative tests through sensitive operations and separate test workbooks/accounts. |
 | FVK-03 | High | Delivery/event/idempotency writes are separate; concurrent duplicate requests and partial failures were not fully recovered. | CONFIRMED | IN PROGRESS | Create and transition recovery implemented and unit-tested; real concurrent Apps Script verification remains. |
-| FVK-04 | High | Consent status can be supplied by a request; provenance and opt-out enforcement are missing end-to-end. | CONFIRMED | BLOCKED | Owner must approve the default consent rule before the ledger and messaging gate are implemented: separate explicit opt-in per phone number; any opt-out suppresses further outbound WhatsApp messages to that number. |
+| FVK-04 | High | Consent status can be supplied by a request; provenance and opt-out enforcement are missing end-to-end. | CONFIRMED; owner decision approved 2026-10-20 (FIKISHA-ODR-CONSENT-01). | BLOCKED — implementation and end-to-end verification remain outstanding. | Implement explicit opt-in per phone number and purpose, provenance/history, durable opt-out suppression until new valid opt-in, and a current consent check immediately before every send/retry. Keep marketing disabled pending separate review. Verify Botswana legal/Meta requirements before activation and reassess Eswatini before expansion. Do not enable outbound messaging until all required gates pass. |
 | FVK-05 | High | Driver offers are not fully persisted/linked to acceptance, expiry and reoffer state. | PARTIALLY CONFIRMED | NOT STARTED | Persisted offer lifecycle, driver/company binding, expiry/reoffer and replay/concurrency tests. |
 | FVK-06 | High | Inbound webhook authenticity and replay protection are not implemented. | CONFIRMED | BLOCKED on secure ingress design/runtime proof | Trusted signature-verifying ingress, replay protection and invalid-signature tests; do not enable live processing until verified. |
 | FVK-07 | High | Google Sheets cannot make the current multi-record writes transactional. | CONFIRMED | IN PROGRESS as a design constraint | Explicit consistency model, operation journal/recovery, failure-injection tests, accurate docs. |
@@ -287,3 +287,69 @@ Run CI on the exact PR head and inspect scenario-specific results. Keep the PR d
 
 - **Latest scenario run before this register update:** exact code/test HEAD `22754bc0034f64f57663f5019a5463e35b260cda`, GitHub Actions run #278 succeeded: 118 passed, 0 failed, 0 skipped; legacy-term scan passed. This run includes offer-expiry corruption rejection, expiry-write recovery, event actor/from/to/time assertions, lifecycle/reoffer, and outbox recovery/exhaustion tests.
 - The candidate PR remains draft/unmerged and stacked on the separate runtime-reliability draft PR. A passing mock suite does not close the live Google integration gate.
+
+
+## Proof of delivery — OTP, evidence and authorization — 2026-10-20
+
+**Candidate branch:** `build/proof-of-delivery-otp-evidence`  
+**Parent:** `build/delivery-offers-outbox` at the previously verified lifecycle/outbox candidate head.  
+**Status:** implementation candidate added; latest CI passed on code/test head `d7085c6a79c64115a614bf01b6fd5a69ae937ada` in run #312: 134 passed, 0 failed, 0 skipped; legacy-term scan passed. Live Google runtime remains unverified.
+
+### Repository findings
+
+- The approved state machine already defines `IN_TRANSIT → DELIVERY_VERIFICATION_PENDING` through `ATTEMPT_DELIVERY`, then `VERIFY_OTP → DELIVERED_VERIFIED`. The prior implementation only checked a basic `ProofOfDelivery` row with a `verified` flag, delivery ID and company ID; there was no OTP challenge service, attempt counter, expiry, Drive metadata/ACL verifier or evidence registry.
+- The delivery service blocks completion unless `store.isProofVerified(proof_id, delivery_id, company_id)` succeeds. This branch strengthens the Sheets implementation so that a proof row alone is insufficient: it must map to a completing/consumed challenge and same-delivery/company verified evidence, including a delivery photo.
+- New workbook tabs: `ProofChallenges` and `ProofEvidence`; existing `ProofOfDelivery` columns and workbook schema version are retained. No existing workbook was opened or migrated.
+
+### Candidate changes
+
+- Added `src/deliveries/proofOfDeliveryService.js` with assigned-driver checks, recipient-bound challenge issue, expiry, five-attempt cap, challenge invalidation, HMAC/MAC storage contract, Drive metadata/ACL checks, evidence registration and recoverable completion.
+- OTP policy: six digits, five-minute default expiry, five failed attempts maximum. OTP plaintext is sent only to the injected sender and is not returned, persisted or logged. Production must provide a cryptographically secure random generator and keyed HMAC backed by a server-only secret; no weak fallback is allowed.
+- Evidence policy: at least one JPEG/PNG `DELIVERY_PHOTO`; optional JPEG/PNG `RECIPIENT_SIGNATURE`. Drive file must be non-trashed, have exactly the server-resolved delivery folder as its only parent, carry trusted company/delivery metadata and pass restricted ACL verification with public/link sharing disabled.
+- Completion records a challenge in `COMPLETING` with one request key and exact evidence list before writing the proof row and invoking the existing state transition. Recovery requires the same request key and evidence list. The Sheets proof guard rechecks challenge and evidence linkage before allowing `DELIVERED_VERIFIED`.
+- Recipient unreachable, missing OTP or failed evidence upload does not complete delivery. The driver must use the existing failed-delivery/escalation/reoffer path. No supervisor override or OTP bypass was added.
+- Added scenario tests for valid proof, wrong and expired OTP, OTP replay, attempt limit, unassigned driver, cross-delivery evidence replay, forged/public Drive references, missing evidence/upload failure, duplicate completion, and interrupted completion/proof-row recovery.
+
+### Required test evidence and limits
+
+| Case | Synthetic test design | Live Google evidence |
+|---|---|---|
+| Valid OTP plus required photo | Test added | Not tested |
+| Wrong OTP and attempts counter | Test added | Not tested |
+| Expired challenge invalidation | Test added | Not tested |
+| OTP reuse/replay and duplicate completion | Test added | Not tested |
+| Rate limit / exhausted challenge | Test added | Not tested |
+| Unauthorized/unassigned driver | Test added | Not tested |
+| Cross-delivery evidence replay | Test added | Not tested |
+| Forged Drive ID, wrong folder, public/link-sharing ACL | Fake metadata/ACL adapter | Not tested |
+| Missing evidence / failed upload | Missing fake file metadata | Not tested |
+| Interrupted completion before proof-row write and before transition | Injected fake-store/service failures | Not tested |
+| Real Drive permission and folder isolation | Not exercised | UNKNOWN |
+| Real Apps Script LockService concurrency, trigger and Sheets persistence | Not exercised | UNKNOWN |
+| Actual OTP sender, secret storage, cryptographic RNG/HMAC | Injected test functions only | UNKNOWN |
+| End-to-end authenticated Google invocation | Not exercised; P0-01 remains blocked | UNKNOWN |
+
+### Safety boundary and closure decision
+
+All proof tests use synthetic contact values, a fake sender, fake Drive metadata/ACLs and fake persistence. No real recipients, phone numbers, evidence files, Google Workspace resources or production data were used. These tests are not evidence of live Drive permissions or an operational Google runtime.
+
+**Do not close the delivery journey or enable an endpoint.** The production HMAC/secret and secure-random adapters, OTP delivery, actual Drive upload/ACL adapter, trusted identity entrypoint (P0-01), and authorized synthetic Google end-to-end tests remain mandatory gates. `doPost` remains disabled. PR must remain draft/unmerged until CI, code review and separately authorized runtime validation.
+
+
+### Final CI update — 2026-10-20
+
+- **Exact PR head:** `b285a71acf808c80444b87183bb73d5c7e8f6024`
+- **GitHub Actions run #308:** [passed](https://github.com/anelevsambo-debug/FIKISHA-V2/actions/runs/39454287426)
+- **Result:** 134 passed, 0 failed, 0 skipped; `npm run check:legacy-terms` passed.
+- This includes the required synthetic proof scenarios plus Sheets-adapter checks that a proof requires a unique proof ID, a matching completing/consumed challenge, verified same-delivery evidence including a photo, and that globally duplicated proof IDs or reused Drive file IDs fail closed.
+- **PR #4 remains draft/open/unmerged.** CI is synthetic Node evidence only. No actual OTP sender, secret-backed HMAC/random generator, Drive ACL, upload flow, Apps Script runtime, or authenticated production entrypoint was exercised. P0-01 remains blocked; `doPost` stays disabled.
+
+
+- **Latest CI confirmation before this register-only follow-up:** run #312 on code/test head `d7085c6a79c64115a614bf01b6fd5a69ae937ada` passed: 134 passed, 0 failed, 0 skipped; legacy-term scan passed. [Run #310](https://github.com/anelevsambo-debug/FIKISHA-V2/actions/runs/39454604682). The subsequent commit updates this remediation register only; no application code changed after the passing tests. PR #4 remains draft and unmerged.
+
+
+## Owner decision update — FVK-04 — 2026-10-20
+
+The owner approved **FIKISHA-ODR-CONSENT-01, Option A**: explicit opt-in per phone number and purpose; recorded consent wording/provenance and status history; opt-out suppression until a new valid opt-in; and a fresh consent check immediately before every outbound send, including queued messages and retries. Marketing remains disabled pending separate review.
+
+This is a policy approval only. FVK-04 remains **BLOCKED** until enforcement is implemented and verified. Missing, ambiguous, revoked or unverifiable consent must fail closed. Service-related messages do not automatically satisfy legal or Meta requirements. Botswana legal/privacy and current Meta policy review remain required; Eswatini requires a separate assessment before expansion. No code, schema, deployment, WhatsApp activation or message sending is authorized by this record.
