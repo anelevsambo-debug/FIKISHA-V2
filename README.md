@@ -20,7 +20,7 @@ FIKISHA-V2 is intended to coordinate real deliveries for multiple companies in B
 - No Google workbook, Drive folder or AppSheet app has been created or verified.
 - No live WhatsApp credentials or messages have been configured.
 - Inbound webhook signature verification, consent/opt-out processing, message status, retry/dead-letter handling, complete company provisioning, AppSheet actions, backups and live two-company isolation tests remain incomplete.
-- Create-operation recovery has only been tested using Node.js fakes; actual Apps Script locking and concurrent Google Sheets behavior remain unverified.
-- Google Sheets does not provide a transaction across delivery, event and idempotency writes. Transition updates and their audit-event writes remain separate.
+- Create and transition recovery have only been tested using Node.js fakes; actual Apps Script locking and concurrent Google Sheets behavior remain unverified.
+- Google Sheets does not provide a transaction across delivery, event and idempotency writes. These writes remain separate, although create/transition retries now use idempotency records and recovery markers.
 
 The code is an implementation step, not a finished product. Do not deploy it for real deliveries or customer personal data. Review [Go/No-Go](docs/GO_NO_GO.md), [Tenancy](docs/TENANCY.md), [Deployment](docs/DEPLOYMENT.md) and [Owner Quickstart](docs/OWNER_QUICKSTART.md).
