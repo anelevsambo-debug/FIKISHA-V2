@@ -6,7 +6,7 @@ const path = require('node:path');
 
 function fixture() {
   const context = vm.createContext({});
-  for (const file of ['errors.js', 'ids.js', 'validators.js', 'permissions.js', 'stateMachine.js']) {
+  for (const file of ['errors.js', 'ids.js', 'validators.js', 'permissions.js', 'stateMachine.js', 'actorResolver.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/core', file), 'utf8'), context);
   }
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/deliveries/service.js'), 'utf8'), context);
@@ -46,16 +46,32 @@ function fixture() {
     isActiveDriver() { return false; }
   };
 
+  const identities = new WeakMap();
+  const actorResolver = context.createTrustedActorResolver({
+    getAuthenticatedEmail: invocation => identities.get(invocation) || '',
+    membershipStore: {
+      getMembershipByEmail(email) {
+        return email === 'admin@example.test'
+          ? { actor_id: 'admin-a', email: 'admin@example.test', company_id: 'COMPANY-A', role: 'COMPANY_ADMIN', active: true }
+          : null;
+      }
+    }
+  });
+  const invocation = {};
+  identities.set(invocation, 'admin@example.test');
+  const actor = actorResolver.resolve(invocation, 'COMPANY-A');
+
   let id = 0;
   const service = context.createDeliveryService({
     store,
+    actorResolver,
     clock: () => new Date('2026-10-20T00:00:00.000Z'),
     idFactory: () => 'TEST-' + (++id)
   });
   return {
     db,
     service,
-    actor: { actor_id: 'admin-a', company_id: 'COMPANY-A', role: 'COMPANY_ADMIN', active: true },
+    actor,
     input: {
       sender_name: 'Sender',
       sender_phone: '+26770000001',

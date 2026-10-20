@@ -5,19 +5,13 @@ const vm = require('node:vm');
 const path = require('node:path');
 
 const c = vm.createContext({});
-for (const file of ['errors.js', 'ids.js', 'validators.js', 'permissions.js', 'stateMachine.js', 'tenants.js']) {
+for (const file of ['errors.js', 'ids.js', 'validators.js', 'permissions.js', 'stateMachine.js', 'tenants.js', 'actorResolver.js']) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/core', file), 'utf8'), c);
 }
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/deliveries/service.js'), 'utf8'), c);
 
 function fixture() {
-  const db = {
-    deliveries: new Map(),
-    events: [],
-    keys: new Map(),
-    proofs: new Set(),
-    drivers: new Set()
-  };
+  const db = { deliveries: new Map(), events: [], keys: new Map(), proofs: new Set(), drivers: new Set() };
   const store = {
     getDelivery: id => db.deliveries.get(id) || null,
     insertDelivery: d => {
@@ -57,24 +51,40 @@ function fixture() {
     isProofVerified: (proof, delivery, company) => db.proofs.has([proof, delivery, company].join(':')),
     isActiveDriver: (id, company) => db.drivers.has([id, company].join(':'))
   };
+
+  const identities = new WeakMap();
+  const memberships = new Map([
+    ['admin-a@example.test', { actor_id: 'admin-1', email: 'admin-a@example.test', company_id: 'CO-A', role: 'COMPANY_ADMIN', active: true }],
+    ['other@example.test', { actor_id: 'other', email: 'other@example.test', company_id: 'CO-B', role: 'COMPANY_ADMIN', active: true }],
+    ['driver@example.test', { actor_id: 'driver', email: 'driver@example.test', company_id: 'CO-A', role: 'DRIVER', active: true }]
+  ]);
+  const actorResolver = c.createTrustedActorResolver({
+    getAuthenticatedEmail: invocation => identities.get(invocation) || '',
+    membershipStore: { getMembershipByEmail: email => memberships.get(email) || null }
+  });
+  function invocation(email) {
+    const value = {};
+    identities.set(value, email);
+    return value;
+  }
+
   let n = 0;
   return {
     db,
-    store,
+    actorResolver,
     service: c.createDeliveryService({
       store,
+      actorResolver,
       clock: () => new Date('2026-10-20T00:00:00Z'),
       idFactory: () => 'ID-' + (++n)
     }),
-    actor: { actor_id: 'admin-1', company_id: 'CO-A', role: 'COMPANY_ADMIN', active: true },
+    actor: actorResolver.resolve(invocation('admin-a@example.test'), 'CO-A'),
+    otherActor: actorResolver.resolve(invocation('other@example.test'), 'CO-B'),
+    driver: actorResolver.resolve(invocation('driver@example.test'), 'CO-A'),
     input: {
-      sender_name: 'Sender',
-      sender_phone: '+26770000001',
-      recipient_name: 'Recipient',
-      recipient_phone: '+26770000002',
-      pickup_text: 'Pickup',
-      dropoff_text: 'Dropoff',
-      consent_status: 'OPTED_IN'
+      sender_name: 'Sender', sender_phone: '+26770000001',
+      recipient_name: 'Recipient', recipient_phone: '+26770000002',
+      pickup_text: 'Pickup', dropoff_text: 'Dropoff', consent_status: 'OPTED_IN'
     }
   };
 }
@@ -98,7 +108,7 @@ test('cross-company actor cannot read delivery', () => {
   const f = fixture();
   const delivery = f.service.create(f.input, f.actor, 'req-1');
   assert.throws(
-    () => f.service.get(delivery.delivery_id, { actor_id: 'other', company_id: 'CO-B', role: 'COMPANY_ADMIN', active: true }),
+    () => f.service.get(delivery.delivery_id, f.otherActor),
     error => error.code === 'TENANT_ACCESS_DENIED'
   );
 });
@@ -106,18 +116,17 @@ test('cross-company actor cannot read delivery', () => {
 test('driver cannot complete delivery without verified proof', () => {
   const f = fixture();
   const delivery = f.service.create(f.input, f.actor, 'req-1');
-  const driver = { actor_id: 'driver', company_id: 'CO-A', role: 'DRIVER', active: true };
   f.db.deliveries.set(delivery.delivery_id, Object.assign({}, delivery, { status: 'DELIVERY_VERIFICATION_PENDING' }));
   assert.throws(
-    () => f.service.transition({ delivery_id: delivery.delivery_id, action: 'VERIFY_OTP', proof_id: 'proof-x' }, driver),
+    () => f.service.transition({ delivery_id: delivery.delivery_id, action: 'VERIFY_OTP', proof_id: 'proof-x' }, f.driver),
     error => error.code === 'VERIFIED_PROOF_REQUIRED'
   );
 });
 
-test('inactive actor cannot create a delivery', () => {
+test('caller-created actor object cannot create a delivery', () => {
   const f = fixture();
   assert.throws(
-    () => f.service.create(f.input, Object.assign({}, f.actor, { active: false }), 'req-1'),
-    error => error.code === 'DELIVERY_CREATE_FORBIDDEN'
+    () => f.service.create(f.input, { actor_id: 'admin-1', company_id: 'CO-A', role: 'COMPANY_ADMIN', active: true }, 'req-1'),
+    error => error.code === 'UNTRUSTED_ACTOR_CONTEXT'
   );
 });

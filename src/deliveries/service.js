@@ -1,7 +1,11 @@
 function createDeliveryService(deps) {
   if (!deps || !deps.store || !deps.clock || !deps.idFactory) throw new FikishaError("SERVICE_DEPENDENCIES_REQUIRED");
+  if (!deps.actorResolver || typeof deps.actorResolver.assertTrusted !== "function") {
+    throw new FikishaError("ACTOR_RESOLVER_REQUIRED");
+  }
 
   var store = deps.store;
+
   if (typeof store.reserveIdempotency !== "function" ||
       typeof store.completeIdempotency !== "function" ||
       typeof store.ensureDelivery !== "function" ||
@@ -10,6 +14,7 @@ function createDeliveryService(deps) {
   }
 
   function actorCheck(actor, companyId) {
+    deps.actorResolver.assertTrusted(actor);
     if (!actor || actor.active !== true || actor.company_id !== companyId) throw new FikishaError("TENANT_ACCESS_DENIED");
     if (actor.role === "DEVELOPER") throw new FikishaError("DEVELOPER_DELIVERY_ACCESS_DENIED");
   }
@@ -56,7 +61,8 @@ function createDeliveryService(deps) {
   }
 
   function create(input, actor, idempotencyKey) {
-    if (!actor || !actor.company_id || !actor.active || !["COMPANY_ADMIN", "DISPATCHER"].includes(actor.role)) {
+    deps.actorResolver.assertTrusted(actor);
+    if (!actor.company_id || actor.active !== true || !["COMPANY_ADMIN", "DISPATCHER"].includes(actor.role)) {
       throw new FikishaError("DELIVERY_CREATE_FORBIDDEN");
     }
 
