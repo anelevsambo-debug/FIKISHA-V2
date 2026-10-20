@@ -33,6 +33,20 @@ function createDeliveryService(deps) {
       normalizedTimestamp(existing.created_at) === normalizedTimestamp(intended.created_at);
   }
 
+  function sameCreateRequest(delivery, input, actor) {
+    return delivery &&
+      delivery.created_by === actor.actor_id &&
+      delivery.company_id === actor.company_id &&
+      delivery.sender_name === input.sender_name.trim() &&
+      delivery.sender_phone === input.sender_phone &&
+      delivery.recipient_name === input.recipient_name.trim() &&
+      delivery.recipient_phone === input.recipient_phone &&
+      delivery.pickup_text === input.pickup_text.trim() &&
+      delivery.dropoff_text === input.dropoff_text.trim() &&
+      delivery.instructions === (isNonEmptyString(input.instructions) ? input.instructions.trim() : "") &&
+      delivery.consent_status === input.consent_status;
+  }
+
   function resumeCreate(key, record) {
     var delivery = record && record.delivery;
     var event = record && record.event;
@@ -76,7 +90,7 @@ function createDeliveryService(deps) {
     var prior = store.getIdempotency(key);
     if (prior) {
       var priorDelivery = prior.delivery || prior.result;
-      if (priorDelivery && priorDelivery.created_by && priorDelivery.created_by !== actor.actor_id) throw new FikishaError("IDEMPOTENCY_KEY_REUSED");
+      if (priorDelivery && !sameCreateRequest(priorDelivery, input, actor)) throw new FikishaError("IDEMPOTENCY_KEY_REUSED");
       if (!prior.state && prior.result) return prior.result;
       if (prior.state === "COMPLETED") {
         if (prior.operation_type !== "CREATE" || !prior.result) throw new FikishaError("IDEMPOTENCY_KEY_REUSED");
@@ -133,7 +147,7 @@ function createDeliveryService(deps) {
     if (!reservation || !reservation.record) throw new FikishaError("IDEMPOTENCY_RESERVATION_FAILED");
     var record = reservation.record;
     var reservedDelivery = record.delivery || record.result;
-    if (reservedDelivery && reservedDelivery.created_by && reservedDelivery.created_by !== actor.actor_id) throw new FikishaError("IDEMPOTENCY_KEY_REUSED");
+    if (reservedDelivery && !sameCreateRequest(reservedDelivery, input, actor)) throw new FikishaError("IDEMPOTENCY_KEY_REUSED");
 
     // Read legacy completed records written by the previous adapter/service shape.
     if (!record.state && record.result) return record.result;
