@@ -228,3 +228,32 @@ test('duplicate persisted idempotency keys fail closed instead of selecting an a
     error => error.code === 'DUPLICATE_IDEMPOTENCY_KEY'
   );
 });
+
+
+test('runExclusive holds one lock across nested store writes and releases it once', () => {
+  let acquisitions = 0;
+  let releases = 0;
+  const f = fixture({
+    lockFactory: () => ({
+      waitLock(timeoutMs) {
+        acquisitions += 1;
+        assert.equal(timeoutMs, 10000);
+      },
+      releaseLock() { releases += 1; }
+    })
+  });
+
+  f.store.runExclusive(() => {
+    f.store.reserveIdempotency('CO-A:outer-lock', { operation_id: 'OP-1' });
+    f.store.ensureEvent({
+      event_id: 'E-OUTER', company_id: 'CO-A', delivery_id: 'D-1',
+      event_type: 'TEST', actor_id: 'A-1', from_status: '', to_status: '',
+      reason: '', proof_id: '', created_at: '2026-10-20T00:00:00.000Z'
+    });
+  });
+
+  assert.equal(acquisitions, 1);
+  assert.equal(releases, 1);
+  assert.equal(f.sheets.get('Idempotency')._data.length, 2);
+  assert.equal(f.sheets.get('DeliveryEvents')._data.length, 2);
+});
