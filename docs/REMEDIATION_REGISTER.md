@@ -200,3 +200,37 @@ Tests use Node.js VM and fake registry/store adapters. They prove the authorizat
 ### Closure decision
 
 P0-02 is **not closed**. Logical code-level isolation has been strengthened, but this task's live Google resource access-control requirement cannot be proven without an authorized non-production Google workspace and separate Company A / Company B accounts. Resource description markers do not replace ACLs. No real customer records or production permissions were changed. P0-03 and other remediation IDs were not started.
+
+
+## Runtime reliability continuation — 2026-10-20 — Concurrency, idempotency and recovery
+
+**Candidate branch:** `reliability/concurrency-recovery`  
+**Baseline:** `97386e6136d111aff92af8edc794cb675554a3f3`  
+**Status:** CODE CHANGES ADDED; CI AND REVIEW PENDING. Live Google runtime remains unverified.
+
+### Source findings
+
+- `src/google/sheetsStore.js` previously locked individual writes but did not expose a lock spanning a complete create/transition operation. The service could read a delivery, reserve an operation, and then write separate records without one shared critical section.
+- Idempotency lookup and reservation previously selected the first matching key. Duplicate persisted keys could cause an arbitrary record to be treated as authoritative.
+- Create idempotency checked actor ownership but did not bind a key to the original payload; the same actor could accidentally reuse a key with different delivery details and receive the old result.
+- Provisioning used persisted job IDs and marked-resource discovery, but did not run the whole provisioning sequence under the platform registry's script lock.
+- Lock acquisition errors could escape as raw runtime errors; lock release errors could mask an earlier operation error. There was no structured, privacy-safe log for these lock paths.
+
+### Candidate changes
+
+- `src/google/sheetsStore.js`: add a bounded, reentrant `runExclusive` critical section; normalize lock-provider/acquisition/release failures; emit structured logs with component/event/error-code only; fail closed on duplicate idempotency keys during lookup/reservation/completion/update.
+- `src/deliveries/service.js`: execute create and transition flows under the store's exclusive lock, covering the initial read, reservation, delivery update, event write and completion record. Bind create idempotency keys to the actor and normalized delivery payload.
+- `src/platform/platformStore.js`: add a bounded, reentrant exclusive section for compound platform operations, with privacy-safe lock logs.
+- `src/companies/provisioning.js`: execute provisioning under the platform store's exclusive section and log a safe error code and current stage, without provider exception text or customer fields.
+- Tests added for same-key retries, conflicting lifecycle requests, lost response after successful commit, completed-action replay, mismatched payload reuse, lock acquisition/release errors, duplicate idempotency rows, nested lock behavior, duplicate provisioning, and recovery after a resource is created but its identifier cannot be saved.
+
+### Evidence required before closure
+
+- Run GitHub Actions on the exact candidate HEAD and inspect failing/passing test names rather than using the test count as the reliability argument.
+- Verify the concurrent-request tests are recognized as deterministic mock tests only: Node's synchronous service harness does not prove two Apps Script executions overlapped in real Google.
+- Live test must use an owner-authorized non-production Google Workspace, synthetic company records, and isolated resources. Test Apps Script `LockService`, Sheets write outcomes after injected/transient errors, Drive creation/marker persistence, and resource ID recovery. No such live evidence is currently available.
+- No automatic blind retry was introduced for Google API writes. An invocation fails with a safe code; a caller may re-submit only through the idempotent operation/recovery path. Live quota/transient error behavior and retry rate limits remain unverified.
+
+### Current closure decision
+
+**Do not close this finding yet.** Even after passing CI, only code paths exercised by mocks will be VERIFIED. Real simultaneous Apps Script execution, Google service error semantics, quota behavior, Drive/Sheets persistence timing, and live lock release behavior remain UNKNOWN until the authorized runtime suite is run. No deployment or production data use is authorized.
