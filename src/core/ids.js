@@ -1,0 +1,1 @@
+function createId(prefix,sequence,checkDigit){if(!/^[A-Z]{2,8}$/.test(prefix)||!Number.isSafeInteger(sequence)||sequence<1)throw new FikishaError("INVALID_ID_INPUT");var body=prefix+"-"+String(sequence).padStart(6,"0");return body+"-"+String(typeof checkDigit==="function"?checkDigit(body):sequence%10);}
