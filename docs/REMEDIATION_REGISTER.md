@@ -245,3 +245,32 @@ P0-02 is **not closed**. Logical code-level isolation has been strengthened, but
 - **Scenario-level mock evidence:** same create key returns one delivery/event; conflicting lifecycle requests produce one accepted transition; successful create with a simulated lost response replays the stored result; failed event write is recovered on retry; completed transition replay creates no new event; mismatched create payload reuse is rejected; lock acquisition timeout fails closed and logs a safe code; release errors are logged without masking the original schema failure; duplicate idempotency rows fail closed; repeated provisioning reuses resources; a marked folder is rediscovered after job-ID persistence fails; old/incompatible workbook schemas fail closed.
 - **Limitations:** the two-request tests are deterministic Node harness tests, not a true overlapping Apps Script execution test. The event-write failure is injected by a fake adapter, not a real Google API outage. Quota behavior, real Google lock semantics, Drive marker persistence timing, and live recovery remain UNKNOWN.
 - **PR:** [#2 — draft, unmerged](https://github.com/anelevsambo-debug/FIKISHA-V2/pull/2). No deployment, production data, or live Google resources were used.
+
+
+## Delivery lifecycle, driver offers and durable notifications — 2026-10-20
+
+**Candidate branch:** `build/delivery-offers-outbox`  
+**Parent:** runtime-reliability candidate `77a033d42c33a49f9077445ecf583ccde646daf2`  
+**Status:** implementation and deterministic test evidence pending CI; no deployment.
+
+### Existing state model retained
+
+The implementation was reconciled with `src/core/stateMachine.js`; no new delivery states were added. Creation starts at `RECEIVED`, validation and quote transitions lead to `DISPATCH_PENDING`, offers use `OFFER_SENT`, driver acceptance leads to `ASSIGNED`, and the journey continues through `COLLECTED` to `IN_TRANSIT`. Decline and expiry return to `DISPATCH_PENDING`; the existing `FAIL_DELIVERY` / `REOFFER` path is retained. Cancellation remains valid only from `RECEIVED`. Proof-of-delivery implementation is explicitly excluded; the lifecycle demonstration stops at `IN_TRANSIT`.
+
+### Candidate changes
+
+- Added `DriverOffers` and `NotificationOutbox` tabs to the company workbook schema.
+- `src/google/sheetsStore.js`: durable offer lookup/create/update operations and outbox enqueue/list/claim/update methods. Offer IDs, request keys and notification IDs fail closed on conflicting duplicates; outbox claims use bounded leases and attempt counts.
+- `src/deliveries/dispatchService.js`: active same-company driver checks; one open offer per delivery; deterministic expiry; offer accept/decline; expiry/reoffer; idempotent retries and repair of interrupted writes after offer creation, assignment, decline or expiry.
+- `src/deliveries/service.js`: state changes enqueue durable internal notifications in the recoverable operation path. Driver actions after assignment must come from the assigned driver, and acceptance requires the authenticated actor ID to match the offer's driver ID.
+- `src/notifications/outboxService.js`: bounded exponential retries, processing leases, safe structured logs, retry exhaustion, provider-message correlation, and distinct `SENT_TO_PROVIDER` versus `DELIVERY_CONFIRMED` states.
+- `src/companies/workbookTemplate.js`: additive tabs; existing schema version remains 2 and incompatible existing headers still fail closed.
+- Tests cover the synthetic pre-proof lifecycle, invalid transitions, driver competition, duplicate offers and responses, expiry/reoffer, decline/reoffer, partial offer/assignment recovery, outbox send failure, retry exhaustion, expired lease recovery, and provider acceptance versus delivery confirmation.
+
+### Live integration limits
+
+No real Google Workspace, Sheets/Drive resources, Apps Script trigger, WhatsApp Cloud API, provider webhook or customer data was used. Fake-store tests do not prove simultaneous Apps Script executions. The live provider must support an idempotency key or duplicate messages remain possible if a send succeeds remotely but its response is lost. Outbox provider acceptance is not proof of delivery. This change does not implement proof-of-delivery and must stop before that work begins.
+
+### Closure gate
+
+Run CI on the exact PR head and inspect scenario-specific results. Keep the PR draft and unmerged until code review and a separate owner-authorized synthetic Google runtime test are complete. Do not claim live delivery, notification delivery, or production readiness from mock evidence.
