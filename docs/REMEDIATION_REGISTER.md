@@ -293,7 +293,7 @@ Run CI on the exact PR head and inspect scenario-specific results. Keep the PR d
 
 **Candidate branch:** `build/proof-of-delivery-otp-evidence`  
 **Parent:** `build/delivery-offers-outbox` at the previously verified lifecycle/outbox candidate head.  
-**Status:** implementation candidate added; CI/review pending at time of register update. Live Google runtime remains unverified.
+**Status:** implementation candidate added; CI passed on exact PR head `b285a71acf808c80444b87183bb73d5c7e8f6024` in run #308: 134 passed, 0 failed, 0 skipped; legacy-term scan passed. Live Google runtime remains unverified.
 
 ### Repository findings
 
@@ -334,3 +334,12 @@ Run CI on the exact PR head and inspect scenario-specific results. Keep the PR d
 All proof tests use synthetic contact values, a fake sender, fake Drive metadata/ACLs and fake persistence. No real recipients, phone numbers, evidence files, Google Workspace resources or production data were used. These tests are not evidence of live Drive permissions or an operational Google runtime.
 
 **Do not close the delivery journey or enable an endpoint.** The production HMAC/secret and secure-random adapters, OTP delivery, actual Drive upload/ACL adapter, trusted identity entrypoint (P0-01), and authorized synthetic Google end-to-end tests remain mandatory gates. `doPost` remains disabled. PR must remain draft/unmerged until CI, code review and separately authorized runtime validation.
+
+
+### Final CI update — 2026-10-20
+
+- **Exact PR head:** `b285a71acf808c80444b87183bb73d5c7e8f6024`
+- **GitHub Actions run #308:** [passed](https://github.com/anelevsambo-debug/FIKISHA-V2/actions/runs/39454287426)
+- **Result:** 134 passed, 0 failed, 0 skipped; `npm run check:legacy-terms` passed.
+- This includes the required synthetic proof scenarios plus Sheets-adapter checks that a proof requires a unique proof ID, a matching completing/consumed challenge, verified same-delivery evidence including a photo, and that globally duplicated proof IDs or reused Drive file IDs fail closed.
+- **PR #4 remains draft/open/unmerged.** CI is synthetic Node evidence only. No actual OTP sender, secret-backed HMAC/random generator, Drive ACL, upload flow, Apps Script runtime, or authenticated production entrypoint was exercised. P0-01 remains blocked; `doPost` stays disabled.
