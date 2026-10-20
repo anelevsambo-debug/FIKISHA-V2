@@ -559,3 +559,53 @@ test('retry repairs offer status when assignment committed before offer record u
   assert.equal(f.db.offers.get(offer.offer_id).status, 'ACCEPTED');
   assert.equal(f.db.deliveries.get(pending.delivery_id).version, 6);
 });
+
+
+test('delivery creation rejects invalid contact data before reserving an operation', () => {
+  const f = fixture();
+  assert.throws(() => f.service.create(Object.assign({}, f.input, { sender_phone: 'not-a-phone' }), f.actor, 'invalid-create'),
+    error => error.code === 'DELIVERY_VALIDATION_FAILED');
+  assert.equal(f.db.deliveries.size, 0);
+  assert.equal(f.db.keys.size, 0);
+});
+
+test('only active same-company drivers are eligible for offers', () => {
+  const f = fixture();
+  const pending = prepareDispatch(f, 'driver-eligibility');
+  assert.throws(() => f.dispatchService.createOffer({
+    delivery_id: pending.delivery_id, driver_id: 'inactive-driver', idempotency_key: 'inactive-driver-offer'
+  }, f.dispatcher), error => error.code === 'ACTIVE_COMPANY_DRIVER_REQUIRED');
+  assert.equal(f.db.offers.size, 0);
+  assert.equal(f.db.deliveries.get(pending.delivery_id).status, 'DISPATCH_PENDING');
+});
+
+test('valid cancellation is limited to RECEIVED and exceptional delivery can be reoffered', () => {
+  const cancelFixture = fixture();
+  const cancellable = cancelFixture.service.create(cancelFixture.input, cancelFixture.actor, 'cancel-received');
+  const cancelled = cancelFixture.service.transition({
+    delivery_id: cancellable.delivery_id, action: 'CANCEL', idempotency_key: 'cancel-before-dispatch'
+  }, cancelFixture.actor);
+  assert.equal(cancelled.status, 'CANCELLED');
+
+  const f = fixture();
+  const pending = prepareDispatch(f, 'failed-attempt');
+  const offer = f.dispatchService.createOffer({
+    delivery_id: pending.delivery_id, driver_id: 'driver', idempotency_key: 'offer-failed-attempt'
+  }, f.dispatcher);
+  f.dispatchService.respond({ offer_id: offer.offer_id, response: 'ACCEPT', idempotency_key: 'accept-failed-attempt' }, f.driver);
+  f.service.transition({ delivery_id: pending.delivery_id, action: 'CONFIRM_COLLECTION', idempotency_key: 'collect-failed-attempt' }, f.driver);
+  f.service.transition({ delivery_id: pending.delivery_id, action: 'START_TRANSIT', idempotency_key: 'transit-failed-attempt' }, f.driver);
+  const failed = f.service.transition({
+    delivery_id: pending.delivery_id, action: 'FAIL_DELIVERY',
+    reason: 'Recipient unavailable', idempotency_key: 'fail-attempt'
+  }, f.driver);
+  assert.equal(failed.status, 'DELIVERY_ATTEMPTED');
+  const returned = f.service.transition({
+    delivery_id: pending.delivery_id, action: 'REOFFER', idempotency_key: 'reoffer-failed-attempt'
+  }, f.dispatcher);
+  assert.equal(returned.status, 'DISPATCH_PENDING');
+  const nextOffer = f.dispatchService.createOffer({
+    delivery_id: pending.delivery_id, driver_id: 'driver2', idempotency_key: 'new-driver-after-failure'
+  }, f.dispatcher);
+  assert.equal(nextOffer.status, 'OFFERED');
+});
