@@ -52,6 +52,7 @@ function createCompanyProvisioner(deps) {
   }
 
   function provisionUnlocked(companyId, actor) {
+    activeStep = "STARTED";
     deps.platformActorResolver.assertTrusted(actor);
     if (!actor || actor.active !== true || actor.role !== "DEVELOPER" || actor.platform_admin !== true) {
       throw new FikishaError("PLATFORM_ADMIN_REQUIRED");
