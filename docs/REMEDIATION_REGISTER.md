@@ -293,7 +293,7 @@ Run CI on the exact PR head and inspect scenario-specific results. Keep the PR d
 
 **Candidate branch:** `build/proof-of-delivery-otp-evidence`  
 **Parent:** `build/delivery-offers-outbox` at the previously verified lifecycle/outbox candidate head.  
-**Status:** implementation candidate added; CI passed on exact PR head `b285a71acf808c80444b87183bb73d5c7e8f6024` in run #308: 134 passed, 0 failed, 0 skipped; legacy-term scan passed. Live Google runtime remains unverified.
+**Status:** implementation candidate added; latest CI passed on exact PR head `16497a0401352a892875ba8efc4edf655c417200` in run #310: 134 passed, 0 failed, 0 skipped; legacy-term scan passed. Live Google runtime remains unverified.
 
 ### Repository findings
 
@@ -343,3 +343,6 @@ All proof tests use synthetic contact values, a fake sender, fake Drive metadata
 - **Result:** 134 passed, 0 failed, 0 skipped; `npm run check:legacy-terms` passed.
 - This includes the required synthetic proof scenarios plus Sheets-adapter checks that a proof requires a unique proof ID, a matching completing/consumed challenge, verified same-delivery evidence including a photo, and that globally duplicated proof IDs or reused Drive file IDs fail closed.
 - **PR #4 remains draft/open/unmerged.** CI is synthetic Node evidence only. No actual OTP sender, secret-backed HMAC/random generator, Drive ACL, upload flow, Apps Script runtime, or authenticated production entrypoint was exercised. P0-01 remains blocked; `doPost` stays disabled.
+
+
+- **Latest CI confirmation:** run #310 on exact current PR head `16497a0401352a892875ba8efc4edf655c417200` passed: 134 passed, 0 failed, 0 skipped; legacy-term scan passed. [Run #310](https://github.com/anelevsambo-debug/FIKISHA-V2/actions/runs/39454455150). No code changes followed this tested head; PR #4 remains draft and unmerged.
