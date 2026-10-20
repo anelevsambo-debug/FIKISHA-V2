@@ -279,3 +279,42 @@ test('lock release failure does not mask the original schema error', () => {
   assert.equal(logs[0].event, 'lock_release_failed');
   assert.equal(JSON.stringify(logs).includes('private release detail'), false);
 });
+
+
+test('driver offers persist idempotently and reject request-key payload conflicts', () => {
+  const f = fixture();
+  const offer = {
+    offer_id: 'O-1', company_id: 'CO-A', delivery_id: 'D-1', driver_id: 'DR-1',
+    status: 'OFFERED', expires_at: '2026-10-20T00:02:00.000Z',
+    created_at: '2026-10-20T00:00:00.000Z', responded_at: '', response_actor_id: '',
+    request_key: 'dispatch-1', attempt_number: 1
+  };
+  assert.equal(f.store.createOffer(offer).created, true);
+  assert.equal(f.store.createOffer(offer).created, false);
+  assert.equal(f.store.getOffer('O-1').driver_id, 'DR-1');
+  assert.equal(f.store.getOfferByRequestKey('CO-A', 'dispatch-1').offer_id, 'O-1');
+  assert.equal(f.sheets.get('DriverOffers')._data.length, 2);
+  assert.throws(
+    () => f.store.createOffer(Object.assign({}, offer, { driver_id: 'DR-2' })),
+    error => error.code === 'DRIVER_OFFER_ID_CONFLICT'
+  );
+});
+
+test('notification outbox deduplicates enqueue and claims due work once', () => {
+  const f = fixture();
+  const notification = {
+    notification_id: 'N-1', company_id: 'CO-A', delivery_id: 'D-1', event_id: 'E-1',
+    recipient_actor_id: 'DR-1', channel: 'WHATSAPP', template_key: 'DRIVER_OFFER',
+    payload_json: '{"offer_id":"O-1"}', status: 'PENDING', attempt_count: 0,
+    next_attempt_at: '', lease_until: '', last_error_code: '', provider_message_id: '',
+    created_at: '2026-10-20T00:00:00.000Z', updated_at: '2026-10-20T00:00:00.000Z'
+  };
+  assert.equal(f.store.enqueueNotification(notification).created, true);
+  assert.equal(f.store.enqueueNotification(notification).created, false);
+  assert.equal(f.store.listDueNotifications('2026-10-20T00:00:01.000Z', 10).length, 1);
+  const claimed = f.store.claimNotification('N-1', '2026-10-20T00:00:01.000Z', '2026-10-20T00:01:01.000Z');
+  assert.equal(claimed.status, 'PROCESSING');
+  assert.equal(claimed.attempt_count, 1);
+  assert.equal(f.store.claimNotification('N-1', '2026-10-20T00:00:02.000Z', '2026-10-20T00:01:02.000Z'), null);
+  assert.equal(f.sheets.get('NotificationOutbox')._data.length, 2);
+});
