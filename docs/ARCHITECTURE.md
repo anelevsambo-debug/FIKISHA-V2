@@ -29,3 +29,21 @@
 - No live Google workbook, Drive folder, AppSheet app or WhatsApp message has been created or verified.
 
 This is not a launch-ready application. Do not use real customer data or deploy for real delivery operations.
+
+## P0-01 identity boundary decision — 2026-10-20
+
+### Current request-to-actor path
+
+There is currently **no authenticated operational request-to-actor path**. The Apps Script entrypoints in `src/Code.js` deliberately return non-operational responses. Internal services accept actor objects only when the injected `createTrustedActorResolver` instance has branded them in its private `WeakSet`. Company actors are minted only after a trusted identity provider supplies an email and the platform registry returns one unique active membership matching that email and requested company. Platform administrators are resolved separately from the `PlatformAdmins` registry; company membership alone does not grant platform administration.
+
+### Trusted identity provider is not selected or connected
+
+Do not assume `Session.getEffectiveUser().getEmail()` identifies the caller of an Apps Script web app: for a web app deployed to execute as its owner, it identifies the owner/executing account rather than reliably proving the end-user. `Session.getActiveUser().getEmail()` may be blank depending on deployment and account/security context. An email passed in request parameters, JSON, an AppSheet expression, or a caller-created actor object is not independently trusted merely because it looks valid.
+
+Before choosing a provider, verify the exact invocation mode in an authorized non-production Google environment. If the selected AppSheet-to-Apps-Script path cannot establish caller identity independently of caller-controlled data, it must not be used as the authentication boundary. Use a supported authenticated Google invocation model or a separately verifiable signed ingress design only after its identity claims, signing key custody, replay protection and authorization semantics are specified and tested. Do not invent or infer a provider in code.
+
+### Fail-closed behavior
+
+The resolver now converts unexpected identity-provider failures to `IDENTITY_PROVIDER_FAILURE` and unexpected registry failures to `IDENTITY_REGISTRY_UNAVAILABLE` without copying exception messages into outward-facing errors. Existing explicit domain error codes, such as duplicate registry records, remain available for controlled handling. Missing identity, missing membership, inactive membership, invalid roles and cross-company mismatches are denied.
+
+`doPost` remains disabled and returns `WEBHOOK_NOT_CONFIGURED`. `doGet` remains a non-operational status response. These handlers must not be connected to protected operations until the real identity source, authenticated invocation path and live Google authorization tests are evidenced in the remediation register.
