@@ -449,7 +449,7 @@ function createSheetsStore(spreadsheetId, lockFactory, logger) {
           }
           return existing;
         }
-        if (all.some(function (row) { return row.drive_file_id === evidence.drive_file_id && row.delivery_id !== evidence.delivery_id; })) {
+        if (all.some(function (row) { return row.drive_file_id === evidence.drive_file_id; })) {
           throw new FikishaError("DRIVE_EVIDENCE_REUSE_DENIED");
         }
         sheet("ProofEvidence", proofEvidenceHeaders).appendRow(proofEvidenceHeaders.map(function (h) {
