@@ -23,7 +23,7 @@
 - The service is not wired to an authenticated operational entrypoint; `src/Code.js` remains fail-closed. GET reports `not_configured`; POST returns `WEBHOOK_NOT_CONFIGURED`.
 - Company onboarding, complete membership resolution, inbound webhook verification, complete AppSheet apps, live Google runtime verification, backups and deployment are not complete.
 - Create-operation idempotency has a reservation and retry-recovery path, but it has only been tested with Node.js fakes. It has not been verified against real Apps Script locks or concurrent Google Sheets writes.
-- Google Sheets still cannot provide a transaction spanning a delivery, event and idempotency record. Transition updates and audit-event appends remain separate operations.
+- Google Sheets still cannot provide a transaction spanning a delivery, event and idempotency record. Create and transition paths now use recovery markers and idempotency records, but writes remain separate and actual Apps Script concurrency behavior is unverified.
 - No live Google workbook, Drive folder, AppSheet app or WhatsApp message has been created or verified.
 
 This is not a launch-ready application. Do not use real customer data or deploy for real delivery operations.
