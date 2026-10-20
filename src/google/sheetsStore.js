@@ -70,6 +70,8 @@ function createSheetsStore(spreadsheetId, lockFactory, logger) {
   var deliveryHeaders = ["delivery_id", "company_id", "status", "sender_name", "sender_phone", "recipient_name", "recipient_phone", "pickup_text", "dropoff_text", "instructions", "consent_status", "created_at", "updated_at", "created_by", "version", "last_operation_id", "driver_id", "proof_id", "delivered_at", "failure_reason"];
   var eventHeaders = ["event_id", "company_id", "delivery_id", "event_type", "actor_id", "from_status", "to_status", "reason", "proof_id", "created_at"];
   var idempotencyHeaders = ["key", "result_json", "created_at"];
+  var offerHeaders = ["offer_id", "company_id", "delivery_id", "driver_id", "status", "expires_at", "created_at", "responded_at", "response_actor_id", "request_key", "attempt_number"];
+  var outboxHeaders = ["notification_id", "company_id", "delivery_id", "event_id", "recipient_actor_id", "channel", "template_key", "payload_json", "status", "attempt_count", "next_attempt_at", "lease_until", "last_error_code", "provider_message_id", "created_at", "updated_at"];
 
   function parseIdempotencyRecord(row) {
     try { return JSON.parse(row.result_json); }
@@ -192,6 +194,138 @@ function createSheetsStore(spreadsheetId, lockFactory, logger) {
     });
   }
 
+
+  function getOffer(offerId) {
+    return findUnique(rows("DriverOffers", offerHeaders), function (row) {
+      return row.offer_id === offerId;
+    }, "DUPLICATE_DRIVER_OFFER");
+  }
+
+  function getOfferByRequestKey(companyId, requestKey) {
+    return findUnique(rows("DriverOffers", offerHeaders), function (row) {
+      return row.company_id === companyId && row.request_key === requestKey;
+    }, "DUPLICATE_DRIVER_OFFER_REQUEST");
+  }
+
+  function listOffersForDelivery(deliveryId) {
+    return rows("DriverOffers", offerHeaders).filter(function (row) {
+      return row.delivery_id === deliveryId;
+    });
+  }
+
+  function createOffer(offer) {
+    return withLock(function () {
+      var all = rows("DriverOffers", offerHeaders);
+      var byId = findUnique(all, function (row) { return row.offer_id === offer.offer_id; }, "DUPLICATE_DRIVER_OFFER");
+      var byKey = findUnique(all, function (row) { return row.company_id === offer.company_id && row.request_key === offer.request_key; }, "DUPLICATE_DRIVER_OFFER_REQUEST");
+      if (byId) {
+        if (byId.company_id !== offer.company_id || byId.delivery_id !== offer.delivery_id ||
+            byId.driver_id !== offer.driver_id || byId.request_key !== offer.request_key) {
+          throw new FikishaError("DRIVER_OFFER_ID_CONFLICT");
+        }
+        return { created: false, offer: byId };
+      }
+      if (byKey) {
+        if (byKey.delivery_id !== offer.delivery_id || byKey.driver_id !== offer.driver_id) {
+          throw new FikishaError("DRIVER_OFFER_REQUEST_KEY_REUSED");
+        }
+        return { created: false, offer: byKey };
+      }
+      sheet("DriverOffers", offerHeaders).appendRow(offerHeaders.map(function (h) {
+        return offer[h] === undefined ? "" : offer[h];
+      }));
+      return { created: true, offer: offer };
+    });
+  }
+
+  function updateOffer(offer, expectedStatus) {
+    return withLock(function () {
+      var all = rows("DriverOffers", offerHeaders);
+      var matches = all.map(function (row, index) { return { row: row, index: index }; })
+        .filter(function (item) { return item.row.offer_id === offer.offer_id; });
+      if (matches.length > 1) throw new FikishaError("DUPLICATE_DRIVER_OFFER");
+      if (!matches.length) throw new FikishaError("DRIVER_OFFER_NOT_FOUND");
+      var current = matches[0].row;
+      if (current.company_id !== offer.company_id) throw new FikishaError("TENANT_MISMATCH");
+      if (expectedStatus && current.status !== expectedStatus) throw new FikishaError("DRIVER_OFFER_STATUS_CONFLICT");
+      sheet("DriverOffers", offerHeaders).getRange(matches[0].index + 2, 1, 1, offerHeaders.length).setValues([offerHeaders.map(function (h) {
+        return offer[h] === undefined ? "" : offer[h];
+      })]);
+      return offer;
+    });
+  }
+
+  function enqueueNotification(record) {
+    return withLock(function () {
+      var all = rows("NotificationOutbox", outboxHeaders);
+      var existing = findUnique(all, function (row) { return row.notification_id === record.notification_id; }, "DUPLICATE_NOTIFICATION_RECORD");
+      if (existing) {
+        if (existing.company_id !== record.company_id || existing.delivery_id !== record.delivery_id ||
+            existing.event_id !== record.event_id || existing.template_key !== record.template_key) {
+          throw new FikishaError("NOTIFICATION_ID_CONFLICT");
+        }
+        return { created: false, notification: existing };
+      }
+      sheet("NotificationOutbox", outboxHeaders).appendRow(outboxHeaders.map(function (h) {
+        return record[h] === undefined ? "" : record[h];
+      }));
+      return { created: true, notification: record };
+    });
+  }
+
+  function getNotification(notificationId) {
+    return findUnique(rows("NotificationOutbox", outboxHeaders), function (row) {
+      return row.notification_id === notificationId;
+    }, "DUPLICATE_NOTIFICATION_RECORD");
+  }
+
+  function listDueNotifications(nowIso, limit) {
+    var now = String(nowIso);
+    return rows("NotificationOutbox", outboxHeaders).filter(function (row) {
+      if (Number(row.attempt_count || 0) >= 5) return false;
+      if (row.status === "PENDING" || row.status === "RETRY") return !row.next_attempt_at || String(row.next_attempt_at) <= now;
+      return row.status === "PROCESSING" && row.lease_until && String(row.lease_until) <= now;
+    }).slice(0, Math.max(0, Math.min(Number(limit || 20), 100)));
+  }
+
+  function claimNotification(notificationId, nowIso, leaseUntilIso) {
+    return withLock(function () {
+      var all = rows("NotificationOutbox", outboxHeaders);
+      var matches = all.map(function (row, index) { return { row: row, index: index }; })
+        .filter(function (item) { return item.row.notification_id === notificationId; });
+      if (matches.length > 1) throw new FikishaError("DUPLICATE_NOTIFICATION_RECORD");
+      if (!matches.length) throw new FikishaError("NOTIFICATION_NOT_FOUND");
+      var row = matches[0].row;
+      if (Number(row.attempt_count || 0) >= 5) return null;
+      var due = (row.status === "PENDING" || row.status === "RETRY") && (!row.next_attempt_at || String(row.next_attempt_at) <= String(nowIso));
+      var leaseExpired = row.status === "PROCESSING" && row.lease_until && String(row.lease_until) <= String(nowIso);
+      if (!due && !leaseExpired) return null;
+      row.status = "PROCESSING";
+      row.attempt_count = Number(row.attempt_count || 0) + 1;
+      row.lease_until = leaseUntilIso;
+      row.updated_at = nowIso;
+      sheet("NotificationOutbox", outboxHeaders).getRange(matches[0].index + 2, 1, 1, outboxHeaders.length).setValues([outboxHeaders.map(function (h) {
+        return row[h] === undefined ? "" : row[h];
+      })]);
+      return row;
+    });
+  }
+
+  function updateNotification(record, expectedStatus) {
+    return withLock(function () {
+      var all = rows("NotificationOutbox", outboxHeaders);
+      var matches = all.map(function (row, index) { return { row: row, index: index }; })
+        .filter(function (item) { return item.row.notification_id === record.notification_id; });
+      if (matches.length > 1) throw new FikishaError("DUPLICATE_NOTIFICATION_RECORD");
+      if (!matches.length) throw new FikishaError("NOTIFICATION_NOT_FOUND");
+      if (expectedStatus && matches[0].row.status !== expectedStatus) throw new FikishaError("NOTIFICATION_STATUS_CONFLICT");
+      sheet("NotificationOutbox", outboxHeaders).getRange(matches[0].index + 2, 1, 1, outboxHeaders.length).setValues([outboxHeaders.map(function (h) {
+        return record[h] === undefined ? "" : record[h];
+      })]);
+      return record;
+    });
+  }
+
   return Object.freeze({
     runExclusive: function (work) { if (typeof work !== "function") throw new FikishaError("LOCK_CALLBACK_REQUIRED"); return withLock(work); },
     getDelivery: getDelivery,
@@ -217,6 +351,16 @@ function createSheetsStore(spreadsheetId, lockFactory, logger) {
       return rows("Drivers", ["driver_id", "company_id", "status"]).some(function (row) {
         return row.driver_id === driverId && row.company_id === companyId && row.status === "ACTIVE";
       });
-    }
+    },
+    getOffer: getOffer,
+    getOfferByRequestKey: getOfferByRequestKey,
+    listOffersForDelivery: listOffersForDelivery,
+    createOffer: createOffer,
+    updateOffer: updateOffer,
+    enqueueNotification: enqueueNotification,
+    getNotification: getNotification,
+    listDueNotifications: listDueNotifications,
+    claimNotification: claimNotification,
+    updateNotification: updateNotification
   });
 }
