@@ -183,6 +183,7 @@ test('platform runExclusive reuses its lock for nested provisioning-job writes',
       releaseLock() { releases += 1; }
     })
   });
+  f.sheets.get('Companies').appendRow(['CO-LOCK', 'Locked Co', 'ACTIVE', '', '', '', '', '']);
 
   f.store.runExclusive(() => {
     f.store.saveProvisioningJob({
