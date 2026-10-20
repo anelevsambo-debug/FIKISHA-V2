@@ -46,7 +46,7 @@ The existing state machine also contains `ATTEMPT_DELIVERY`, `VERIFY_OTP`, and `
 
 Node.js tests use synthetic data and fake stores/senders. They exercise the actual delivery, dispatch and outbox application logic, but they do not prove real Google Sheets locking, trigger scheduling, quota behavior, Drive/AppSheet permissions, or provider delivery. The Google workbook initializer creates the new tabs for an existing schema-v2 workbook if they are absent, and fails closed on incompatible existing headers. Real Google integration remains unverified.
 
-Proof-of-delivery implementation is explicitly out of scope for this stage.
+Proof-of-delivery candidate implementation is documented in `docs/PROOF_OF_DELIVERY.md`. It adds a bounded OTP challenge and evidence orchestration path, but the HMAC/random generator, OTP sender, Drive metadata/ACL adapter and authenticated Google entrypoint remain injected/unwired. Synthetic tests do not close the live Google integration gate; do not enable an operational endpoint or call the journey production-ready.
 
 ## Trusted SYSTEM actor boundary
 
