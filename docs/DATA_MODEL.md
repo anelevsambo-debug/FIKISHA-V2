@@ -3,6 +3,17 @@
 ## Implementation boundary
 The branch includes a Sheets persistence adapter and delivery service, but no live Google workbook has been provisioned or tested. A company workbook must have the exact sheet names and headers below before the adapter can operate. Missing sheets or mismatched headers fail closed.
 
+## Platform registry workbook
+
+The platform workbook adapter uses these server-controlled sheets:
+- Companies: company_id, name, status, drive_folder_id, workbook_id, onboarding_status, created_at, updated_at
+- CompanyMembers: actor_id, email, company_id, role, status, created_at, updated_at
+- ProvisioningJobs: company_id, status, folder_id, workbook_id, step, note, error_code, created_at, updated_at
+
+The adapter validates headers, rejects duplicate company/membership/job keys, normalizes email for membership lookup, returns inactive membership as inactive, and upserts provisioning jobs without replacing their original creation timestamp. It can be injected into the actor resolver as its membership store.
+
+This is an adapter implementation, not a provisioned live platform workbook. A real trusted identity provider and a real platform workbook have not been configured or tested.
+
 ## Required company workbook sheets
 - Deliveries: delivery_id, company_id, status, sender_name, sender_phone, recipient_name, recipient_phone, pickup_text, dropoff_text, instructions, consent_status, created_at, updated_at, created_by, version, last_operation_id, driver_id, proof_id, delivered_at, failure_reason
 - DeliveryEvents: event_id, company_id, delivery_id, event_type, actor_id, from_status, to_status, reason, proof_id, created_at
