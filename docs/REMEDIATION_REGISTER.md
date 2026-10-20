@@ -74,3 +74,42 @@
 ## Update protocol
 
 Append new evidence with commit SHA and workflow URL. Preserve stable IDs and previous evidence. Do not close findings because related code exists. Update statuses only when the required evidence has been inspected.
+
+## Engineering continuation — 2026-10-20 — P0-01
+
+**Candidate HEAD:** 6c87ba2ad1e4134090daa830a3d7f9bbf425db79  
+**PR:** [#1 — draft, unmerged](https://github.com/anelevsambo-debug/FIKISHA-V2/pull/1)  
+**Task status:** **BLOCKED — security regression guard added; trusted identity integration not closed.**
+
+### Root cause confirmed
+
+src/core/actorResolver.js defines a resolver contract that depends on an injected getAuthenticatedEmail function and a server-side membership store. No real trusted identity provider or authenticated invocation context is wired into the project. src/Code.js intentionally keeps doPost disabled and returns WEBHOOK_NOT_CONFIGURED; the existing endpoint is not an operational API.
+
+The safe correction cannot be to trust email, actor_id, role, platform_admin, or company_id supplied in request parameters or JSON. Selecting and verifying a real authentication/invocation model requires an authorized Google/AppSheet test environment and evidence of how caller identity is established. Until then, the operational endpoint must remain disabled.
+
+### Acceptance criteria for P0-01 closure
+
+1. A real trusted invocation identity is obtained independently of caller-controlled request fields.
+2. Active company membership and role are resolved server-side from the platform-controlled registry.
+3. Positive test: an authorized test actor can invoke a harmless operation in the correct company.
+4. Negative/adversarial tests reject missing identity, forged email/actor/role/company fields, inactive membership, invalid role, wrong-company membership and replayed/unauthorized invocation as applicable to the chosen boundary.
+5. Rejected requests perform no protected reads or writes.
+6. The chosen path is tested in an authorized non-production Apps Script/Google environment, with exact commit and test evidence recorded.
+7. doPost remains disabled until all preceding evidence exists.
+
+### Safe regression guard added
+
+- **File:** tests/unit/entrypoint.test.js
+- **Commit:** 6c87ba2ad1e4134090daa830a3d7f9bbf425db79
+- **Change:** added a regression test supplying forged identity and authority fields through parameter, parameters, JSON postData, and a combined request shape. Each attempt must receive the unchanged fail-closed WEBHOOK_NOT_CONFIGURED response.
+- **CI:** [Run #181](https://github.com/anelevsambo-debug/FIKISHA-V2/actions/runs/39434043311) succeeded on this exact candidate HEAD. Job logs report **56 tests passed, 0 failed, 0 skipped**; npm run check:legacy-terms also passed.
+- **Evidence class:** VERIFIED in Node.js CI for the disabled placeholder only. This does not verify Apps Script runtime behavior or complete P0-01.
+
+### Not tested / remaining blockers
+
+- No real identity provider or trusted Apps Script/AppSheet invocation identity.
+- No live platform workbook or end-to-end server-side membership lookup through an authenticated endpoint.
+- No real Apps Script runtime, Google permissions, or protected-operation side-effect test.
+- No production deployment; none is authorized.
+
+**Closure decision:** P0-01 remains **BLOCKED**. Do not mark it complete on the strength of the regression test or green CI. Do not proceed to P0-02 implementation in this cycle.
