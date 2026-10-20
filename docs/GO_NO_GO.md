@@ -6,7 +6,7 @@
 |---|---|---|
 | Delivery service | IMPLEMENTED, NOT VERIFIED | Unit tests cover create/transition logic; no authenticated operational entrypoint or live Apps Script test. |
 | Trusted actor resolver | IMPLEMENTED, NOT VERIFIED | Resolver rejects caller-created actors and checks active membership, but no real identity provider or membership-store adapter is connected. |
-| Unit tests | VERIFIED IN TEST ENVIRONMENT | GitHub Actions run #109: 38 passed, 0 failed, 0 skipped on Node.js 24; tests use fake platform interfaces. |
+| Unit tests | VERIFIED IN TEST ENVIRONMENT | GitHub Actions run #119: 38 passed, 0 failed, 0 skipped on Node.js 24; tests use fake platform interfaces. |
 | Sheets adapter | IMPLEMENTED, NOT VERIFIED | Fake Sheets tests cover reservation and duplicate protection; no live workbook or real concurrent lock test. |
 | Create/transition recovery | IMPLEMENTED, NOT VERIFIED | Simulated partial-write tests pass; actual Apps Script/Google Sheets behavior remains unverified. |
 | Company provisioning | NOT STARTED | No actual end-to-end provisioning pipeline verified. |
