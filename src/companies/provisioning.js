@@ -14,6 +14,11 @@ function createCompanyProvisioner(deps) {
   }
 
   var platformStore = deps.platformStore;
+  var log = typeof deps.logger === "function" ? deps.logger : function () {};
+
+  function logReliability(event, code, step) {
+    try { log({ component: "provisioning", event: event, code: code, step: step || "UNKNOWN" }); } catch (ignored) {}
+  }
 
   function folderMarker(companyId) {
     return "FIKISHA-V2|company_id=" + companyId + "|resource=operations-folder";
@@ -45,7 +50,7 @@ function createCompanyProvisioner(deps) {
     return file;
   }
 
-  function provision(companyId, actor) {
+  function provisionUnlocked(companyId, actor) {
     deps.platformActorResolver.assertTrusted(actor);
     if (!actor || actor.active !== true || actor.role !== "DEVELOPER" || actor.platform_admin !== true) {
       throw new FikishaError("PLATFORM_ADMIN_REQUIRED");
@@ -146,6 +151,19 @@ function createCompanyProvisioner(deps) {
       } catch (stateError) {
         throw new FikishaError("PROVISIONING_STATE_SAVE_FAILED");
       }
+      throw error;
+    }
+  }
+
+  function provision(companyId, actor) {
+    try {
+      var result = typeof platformStore.runExclusive === "function"
+        ? platformStore.runExclusive(function () { return provisionUnlocked(companyId, actor); })
+        : provisionUnlocked(companyId, actor);
+      logReliability("provisioning_completed", "PROVISIONING_COMPLETED", "WORKBOOK_INITIALIZED");
+      return result;
+    } catch (error) {
+      logReliability("provisioning_failed", error && error.code ? error.code : "PROVISIONING_FAILED", "UNKNOWN");
       throw error;
     }
   }
