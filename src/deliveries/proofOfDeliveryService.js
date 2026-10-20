@@ -90,7 +90,9 @@ function createProofOfDeliveryService(deps) {
     }
     var folderId = deps.drive.getDeliveryEvidenceFolder(delivery.company_id, delivery.delivery_id);
     if (!validId(folderId)) throw new FikishaError("DELIVERY_EVIDENCE_FOLDER_UNAVAILABLE");
-    var metadata = deps.drive.getFileMetadata(fileId);
+    var metadata;
+    try { metadata = deps.drive.getFileMetadata(fileId); }
+    catch (error) { throw new FikishaError("DRIVE_EVIDENCE_VALIDATION_UNAVAILABLE"); }
     if (!metadata || metadata.id !== fileId || metadata.trashed === true ||
         !allowedMimeTypes.includes(metadata.mime_type) ||
         !Array.isArray(metadata.parent_ids) || metadata.parent_ids.indexOf(folderId) < 0 ||
@@ -98,7 +100,9 @@ function createProofOfDeliveryService(deps) {
     if (metadata.delivery_id !== delivery.delivery_id || metadata.company_id !== delivery.company_id) {
       throw new FikishaError("DRIVE_EVIDENCE_BINDING_INVALID");
     }
-    deps.drive.assertRestrictedAccess(fileId, { company_id: delivery.company_id, delivery_id: delivery.delivery_id, allowed_roles: ["COMPANY_ADMIN", "DISPATCHER", "ASSIGNED_DRIVER"], allow_public: false, allow_link_sharing: false });
+    try {
+      deps.drive.assertRestrictedAccess(fileId, { company_id: delivery.company_id, delivery_id: delivery.delivery_id, allowed_roles: ["COMPANY_ADMIN", "DISPATCHER", "ASSIGNED_DRIVER"], allow_public: false, allow_link_sharing: false });
+    } catch (error) { throw new FikishaError("DRIVE_ACCESS_VALIDATION_FAILED"); }
     return {
       evidence_id: deps.idFactory(), company_id: delivery.company_id, delivery_id: delivery.delivery_id,
       challenge_id: challenge.challenge_id, drive_file_id: fileId, evidence_type: evidenceType,
