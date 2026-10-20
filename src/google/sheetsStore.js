@@ -282,9 +282,10 @@ function createSheetsStore(spreadsheetId, lockFactory, logger) {
   function listDueNotifications(nowIso, limit) {
     var now = String(nowIso);
     return rows("NotificationOutbox", outboxHeaders).filter(function (row) {
+      if (row.status === "PROCESSING" && row.lease_until && String(row.lease_until) <= now) return true;
       if (Number(row.attempt_count || 0) >= 5) return false;
       if (row.status === "PENDING" || row.status === "RETRY") return !row.next_attempt_at || String(row.next_attempt_at) <= now;
-      return row.status === "PROCESSING" && row.lease_until && String(row.lease_until) <= now;
+      return false;
     }).slice(0, Math.max(0, Math.min(Number(limit || 20), 100)));
   }
 
@@ -296,7 +297,16 @@ function createSheetsStore(spreadsheetId, lockFactory, logger) {
       if (matches.length > 1) throw new FikishaError("DUPLICATE_NOTIFICATION_RECORD");
       if (!matches.length) throw new FikishaError("NOTIFICATION_NOT_FOUND");
       var row = matches[0].row;
-      if (Number(row.attempt_count || 0) >= 5) return null;
+      if (Number(row.attempt_count || 0) >= 5) {
+        if (row.status === "PROCESSING" && row.lease_until && String(row.lease_until) <= String(nowIso)) {
+          row.status = "FAILED";
+          row.last_error_code = row.last_error_code || "RETRY_EXHAUSTED_AFTER_INTERRUPTION";
+          row.lease_until = "";
+          row.updated_at = nowIso;
+          sheet("NotificationOutbox", outboxHeaders).getRange(matches[0].index + 2, 1, 1, outboxHeaders.length).setValues([outboxHeaders.map(function (h) { return row[h] === undefined ? "" : row[h]; })]);
+        }
+        return null;
+      }
       var due = (row.status === "PENDING" || row.status === "RETRY") && (!row.next_attempt_at || String(row.next_attempt_at) <= String(nowIso));
       var leaseExpired = row.status === "PROCESSING" && row.lease_until && String(row.lease_until) <= String(nowIso);
       if (!due && !leaseExpired) return null;
