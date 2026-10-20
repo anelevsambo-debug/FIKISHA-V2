@@ -5,22 +5,51 @@
  * authenticate a caller; actorResolver must receive email from a separately trusted
  * authentication provider and then use getMembershipByEmail to authorize company access.
  */
-function createPlatformStore(spreadsheetId, lockFactory) {
+function createPlatformStore(spreadsheetId, lockFactory, logger) {
   if (typeof spreadsheetId !== "string" || !spreadsheetId.trim()) throw new FikishaError("PLATFORM_WORKBOOK_ID_REQUIRED");
   if (typeof SpreadsheetApp === "undefined") throw new FikishaError("APPS_SCRIPT_RUNTIME_REQUIRED");
 
   var ss = SpreadsheetApp.openById(spreadsheetId);
   var lockProvider = lockFactory || function () { return LockService.getScriptLock(); };
+  var log = typeof logger === "function" ? logger : function () {};
+  var lockDepth = 0;
   var companyHeaders = ["company_id", "name", "status", "drive_folder_id", "workbook_id", "onboarding_status", "created_at", "updated_at"];
   var memberHeaders = ["actor_id", "email", "company_id", "role", "status", "created_at", "updated_at"];
   var platformAdminHeaders = ["actor_id", "email", "status", "created_at", "updated_at"];
   var jobHeaders = ["company_id", "status", "folder_id", "workbook_id", "step", "note", "error_code", "created_at", "updated_at"];
 
+  function logReliability(event, code) {
+    try { log({ component: "platform_store", event: event, code: code }); } catch (ignored) {}
+  }
+
   function withLock(work) {
-    var lock = lockProvider();
-    lock.waitLock(10000);
+    if (lockDepth > 0) {
+      lockDepth += 1;
+      try { return work(); } finally { lockDepth -= 1; }
+    }
+    var lock;
+    try { lock = lockProvider(); }
+    catch (error) {
+      logReliability("lock_unavailable", "LOCK_UNAVAILABLE");
+      throw new FikishaError("LOCK_UNAVAILABLE");
+    }
+    try { lock.waitLock(10000); }
+    catch (error) {
+      logReliability("lock_acquisition_failed", "LOCK_ACQUISITION_TIMEOUT");
+      throw new FikishaError("LOCK_ACQUISITION_TIMEOUT");
+    }
+    lockDepth = 1;
+    var workFailed = false;
     try { return work(); }
-    finally { lock.releaseLock(); }
+    catch (error) { workFailed = true; throw error; }
+    finally {
+      lockDepth = 0;
+      try { lock.releaseLock(); }
+      catch (error) {
+        logReliability("lock_release_failed", "LOCK_RELEASE_FAILED");
+        if (!workFailed) throw new FikishaError("LOCK_RELEASE_FAILED");
+      }
+    }
   }
 
   function sheet(name, headers) {
@@ -148,6 +177,7 @@ function createPlatformStore(spreadsheetId, lockFactory) {
   }
 
   return Object.freeze({
+    runExclusive: function (work) { if (typeof work !== "function") throw new FikishaError("LOCK_CALLBACK_REQUIRED"); return withLock(work); },
     getCompany: getCompany,
     getMembershipByEmail: getMembershipByEmail,
     getPlatformAdminByEmail: getPlatformAdminByEmail,
