@@ -101,7 +101,7 @@ function fixture(options = {}) {
     company: options.company || { company_id: 'CO-A', name: 'Company A', status: 'ACTIVE' },
     job: options.job || null,
     resources: null,
-    getCompany(id) { return id === this.company.company_id ? this.company : null; },
+    getCompany(id) { return options.company ? this.company : (id === this.company.company_id ? this.company : null); },
     getProvisioningJob() { return this.job ? Object.assign({}, this.job) : null; },
     saveProvisioningJob(job) { this.job = Object.assign({}, job); },
     updateCompanyResources(id, resources) {
