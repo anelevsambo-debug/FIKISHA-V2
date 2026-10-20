@@ -11,12 +11,12 @@
 ## Implemented in this branch
 - Core validation and permission helpers, partial state machine and tenant-context helper.
 - Trusted actor resolver contract that mints frozen, branded actor objects only after the injected identity provider and membership store return a matching active company membership.
-- Platform registry Sheets adapter for Companies, CompanyMembers and ProvisioningJobs, with header checks, duplicate-record denial and retry-safe provisioning-job upserts.
+- Platform registry Sheets adapter for Companies, CompanyMembers, PlatformAdmins and ProvisioningJobs, with header checks, duplicate-record denial and retry-safe provisioning-job upserts.
 - Non-destructive platform workbook initializer with schema-version checks.
 - Delivery service now rejects caller-created actor objects and requires a trusted actor resolver.
 - Google Sheets adapter with required-header checks, optimistic version checks, script-lock-protected idempotency reservation, duplicate-safe create-row/event writes, and retry recovery for partial create operations.
 - Idempotent company workbook schema initializer.
-- Drive folder/workbook provisioning primitives that recover uniquely marked existing resources and fail closed on duplicates or identity mismatches (not end-to-end verified).
+- Drive folder/workbook provisioning primitives that recover uniquely marked existing resources and fail closed on duplicates or identity mismatches; the provisioner requires a resolver-branded platform-admin actor (not end-to-end verified).
 - Outbound Meta template-message adapter with injected HTTP client.
 - Node.js unit tests and GitHub Actions checks.
 
