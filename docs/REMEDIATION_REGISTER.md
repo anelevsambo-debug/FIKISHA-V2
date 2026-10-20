@@ -234,3 +234,14 @@ P0-02 is **not closed**. Logical code-level isolation has been strengthened, but
 ### Current closure decision
 
 **Do not close this finding yet.** Even after passing CI, only code paths exercised by mocks will be VERIFIED. Real simultaneous Apps Script execution, Google service error semantics, quota behavior, Drive/Sheets persistence timing, and live lock release behavior remain UNKNOWN until the authorized runtime suite is run. No deployment or production data use is authorized.
+
+
+### CI result — 2026-10-20
+
+- **Exact tested HEAD:** `d489f8ce58605e9975c6467eb74b7056082d3dff`
+- **GitHub Actions run #229:** [successful CI run](https://github.com/anelevsambo-debug/FIKISHA-V2/actions/runs/39440627182)
+- **Result:** 96 passed, 0 failed, 0 skipped; legacy-term scan passed. Node.js CI used repository workflow and fake/synthetic adapters only.
+- Run #219 initially failed one logger assertion because objects created in separate VM contexts have different prototypes. The test was corrected to compare serialized log values; subsequent run #221 passed, and run #229 passed after the additional exclusive-boundary tests. The earlier failure is retained as test-development evidence, not counted as a product defect.
+- **Scenario-level mock evidence:** same create key returns one delivery/event; conflicting lifecycle requests produce one accepted transition; successful create with a simulated lost response replays the stored result; failed event write is recovered on retry; completed transition replay creates no new event; mismatched create payload reuse is rejected; lock acquisition timeout fails closed and logs a safe code; release errors are logged without masking the original schema failure; duplicate idempotency rows fail closed; repeated provisioning reuses resources; a marked folder is rediscovered after job-ID persistence fails; old/incompatible workbook schemas fail closed.
+- **Limitations:** the two-request tests are deterministic Node harness tests, not a true overlapping Apps Script execution test. The event-write failure is injected by a fake adapter, not a real Google API outage. Quota behavior, real Google lock semantics, Drive marker persistence timing, and live recovery remain UNKNOWN.
+- **PR:** [#2 — draft, unmerged](https://github.com/anelevsambo-debug/FIKISHA-V2/pull/2). No deployment, production data, or live Google resources were used.
