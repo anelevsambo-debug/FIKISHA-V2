@@ -107,10 +107,11 @@ function createSheetsStore(spreadsheetId, lockFactory) {
       var all = rows("Idempotency", idempotencyHeaders);
       var index = all.findIndex(function (row) { return row.key === key; });
       if (index < 0) throw new FikishaError("IDEMPOTENCY_RESERVATION_MISSING");
+      var createdAt = all[index].created_at || record.created_at || new Date().toISOString();
       sheet("Idempotency", idempotencyHeaders).getRange(index + 2, 1, 1, idempotencyHeaders.length).setValues([[
         key,
         JSON.stringify(record),
-        record.updated_at || record.created_at || new Date().toISOString()
+        createdAt
       ]]);
       return record;
     });
@@ -120,7 +121,8 @@ function createSheetsStore(spreadsheetId, lockFactory) {
     return withLock(function () {
       var all = rows("Idempotency", idempotencyHeaders);
       var index = all.findIndex(function (row) { return row.key === key; });
-      var data = [key, JSON.stringify(value), value.created_at || new Date().toISOString()];
+      var createdAt = index >= 0 ? all[index].created_at : (value.created_at || new Date().toISOString());
+      var data = [key, JSON.stringify(value), createdAt];
       if (index < 0) sheet("Idempotency", idempotencyHeaders).appendRow(data);
       else sheet("Idempotency", idempotencyHeaders).getRange(index + 2, 1, 1, idempotencyHeaders.length).setValues([data]);
       return value;
