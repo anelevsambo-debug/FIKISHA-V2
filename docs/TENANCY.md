@@ -15,3 +15,17 @@ Before launch:
 6. Keep real customer data out until cross-tenant tests pass.
 
 Current status: NOT LIVE-VERIFIED; NO-GO for real customer data.
+
+## P0-02 engineering continuation — 2026-10-20
+
+The new `resolveTenantResources(companyId, actor, deps)` path in `src/core/tenants.js` requires a resolver-branded active actor whose company matches the requested company. It loads the company record from the server-controlled platform registry and obtains workbook/folder IDs only from that record. It rejects missing resource bindings, inactive companies, registry errors, foreign Drive folder/workbook markers, a mismatched CompanyConfig company ID, and schema versions other than 2. It does not accept caller-supplied resource IDs. The Sheets store is constructed with the registry's workbook ID.
+
+The Sheets adapter now rejects duplicate delivery IDs instead of selecting the first matching row. It rejects a delivery ID already bound to another company and refuses to save a row if the stored company differs from the update's company. The delivery service tests additionally exercise Company B attempting to read or transition a Company A delivery and using Company B proof evidence against a Company A delivery.
+
+Provisioning now requires the Companies registry result to match the requested company ID and have status `ACTIVE`; it rejects a provisioning job bound to another company. Existing deterministic resource names, company/resource markers, duplicate detection, and job-based retry recovery remain in place.
+
+### Google resource ACL boundary
+
+These checks verify logical binding only. No real Google test workspace, company workbooks, Drive folders, or separate test accounts were available for this task. This branch does not yet verify or enforce per-company Google Drive/Sheets ACLs. The central Apps Script owner can access resources shared with that account, and Drive description markers are integrity checks, not access-control lists. Before any real customer use, test direct workbook and folder access as Company A and Company B users, verify editor/viewer sharing settings, and confirm unauthorized accounts cannot open the other tenant's resources directly.
+
+Status: logical isolation is strengthened and mock-tested; live Google resource isolation remains UNKNOWN / NOT VERIFIED. No production permissions or customer data were changed.
