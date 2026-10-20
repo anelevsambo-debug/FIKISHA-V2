@@ -113,3 +113,43 @@ The safe correction cannot be to trust email, actor_id, role, platform_admin, or
 - No production deployment; none is authorized.
 
 **Closure decision:** P0-01 remains **BLOCKED**. Do not mark it complete on the strength of the regression test or green CI. Do not proceed to P0-02 implementation in this cycle.
+
+## P0-01 continuation — 2026-10-20 — resolver failure handling and adversarial tests
+
+**Status: BLOCKED for live identity verification; safe code/test work completed.**
+
+### Identity and authorization path verified in source
+
+- Apps Script handlers: `src/Code.js` — GET returns `OPERATIONAL_API_NOT_CONFIGURED`; POST returns `WEBHOOK_NOT_CONFIGURED`. Neither invokes operational services.
+- Resolver: `src/core/actorResolver.js` — accepts an injected trusted identity provider and membership store; it does not itself authenticate a caller.
+- Platform registry: `src/platform/platformStore.js` — looks up company membership and platform administrators separately in server-controlled Sheets tabs; duplicate records fail closed.
+- Delivery authorization: `src/deliveries/service.js` — rejects unbranded actors, enforces company matching and action-specific roles.
+- Provisioning authorization: `src/companies/provisioning.js` — requires a resolver-branded active platform-admin actor, not a client-supplied role flag.
+- Design decision documented in `docs/ARCHITECTURE.md`: do not assume Apps Script `Session` APIs prove the end user for every deployment mode; select the identity provider only after verifying the exact Google invocation mode.
+
+### Code and tests
+
+- Resolver code commit: `9dee562e6a2a8b64c12bda0517d9a8194e247434`. Unexpected identity-provider errors now return `IDENTITY_PROVIDER_FAILURE`; unexpected membership/admin registry failures return `IDENTITY_REGISTRY_UNAVAILABLE`, without exposing exception messages. Explicit domain error codes remain available.
+- Security-test commit: `7398d012ae76b3aca1b89fdde02d00998da3b124`. Added tests for forged email/actor/role/company fields, forged company context, unknown actor, identity-provider failure, registry failure, platform-admin/company-role separation and inactive platform admin.
+- Architecture decision commit: `cdd3079035c88dbcb7934d7153e95ad13ce793d0`.
+- **CI run #187** on the security-test commit passed: 63 tests passed, 0 failed, 0 skipped; legacy-term scan passed. [Run #187](https://github.com/anelevsambo-debug/FIKISHA-V2/actions/runs/39434975666).
+- Existing actual-path tests also exercise authorized delivery creation, cross-company delivery access denial, and rejection of raw actor objects in the delivery service; provisioning tests reject raw actors and ordinary company admins for platform-admin-only provisioning.
+
+### Required test coverage and evidence boundaries
+
+| Required case | Automated evidence | Live Google evidence |
+|---|---|---|
+| Missing identity | Covered | Not available |
+| Forged email/actor/role/company | Covered at resolver boundary | Not available |
+| Unknown actor | Covered | Not available |
+| Disabled/revoked membership | Inactive company and platform-admin cases covered | Not available |
+| Cross-company resource access | Delivery-service test exists | Not available |
+| Unauthorized platform-admin action | Provisioning test rejects raw actor and company admin | Not available |
+| Authorized allowed action | Delivery creation through trusted test resolver | Not available |
+| Identity-provider/registry failure | Covered; exception detail is not propagated | Not available |
+
+Tests use Node.js VM and fake registry/store adapters. They prove the authorization decision logic for those supplied dependencies, not the trustworthiness of a real identity provider or real Google services.
+
+### P0-01 closure decision
+
+**P0-01 remains BLOCKED.** No supported trusted identity provider is currently wired to an authenticated operational entrypoint, and no authorized non-production Google identity test was available. Do not enable `doPost`, do not use request-supplied identity fields as authority, and do not mark the application production-secure. No P0-02 implementation was started.
