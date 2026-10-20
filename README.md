@@ -8,6 +8,7 @@ FIKISHA-V2 is intended to coordinate real deliveries for multiple companies in B
 - Core input validation, role helper, partial lifecycle state machine and tenant-context helper.
 - Trusted actor resolver contract that checks an injected identity provider against active company membership and rejects caller-created actor objects.
 - Platform registry Sheets adapter for company metadata, memberships and provisioning-job state, covered by fake-Sheets tests.
+- Non-destructive platform workbook initializer that preserves existing records and rejects incompatible schema versions.
 - Retry-safe company Drive-folder/workbook provisioning primitives that discover and validate existing marked resources after partial failure.
 - Delivery service for validated creation, guarded transitions and audit-event calls.
 - Google Sheets adapter with script-lock-protected idempotency reservation, duplicate-safe create-row/event writes, and retry recovery for partial create and transition operations; workbook schema v2 includes a last-operation marker.
