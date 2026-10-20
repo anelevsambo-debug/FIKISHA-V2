@@ -206,3 +206,17 @@ test('retrying a completed transition returns its stored result without another 
   assert.equal(f.db.events.length, eventsAfterFirst);
   assert.equal(f.db.deliveries.get(created.delivery_id).version, 2);
 });
+
+
+test('same create idempotency key with a different payload is rejected', () => {
+  const f = fixture();
+  f.service.create(f.input, f.actor, 'payload-bound-key');
+  const changed = Object.assign({}, f.input, { dropoff_text: 'Different destination' });
+
+  assert.throws(
+    () => f.service.create(changed, f.actor, 'payload-bound-key'),
+    error => error.code === 'IDEMPOTENCY_KEY_REUSED'
+  );
+  assert.equal(f.db.deliveries.size, 1);
+  assert.equal(f.db.events.length, 1);
+});
