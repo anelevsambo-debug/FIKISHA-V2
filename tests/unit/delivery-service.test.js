@@ -302,6 +302,11 @@ test('synthetic lifecycle reaches IN_TRANSIT through durable offer acceptance an
   assert.equal(assigned.status, 'ASSIGNED');
   assert.equal(assigned.driver_id, 'driver');
   assert.equal(f.db.offers.get(offer.offer_id).status, 'ACCEPTED');
+  const assignmentEvent = f.db.events.find(event => event.event_type === 'ACCEPT_OFFER' && event.delivery_id === pending.delivery_id);
+  assert.equal(assignmentEvent.actor_id, 'driver');
+  assert.equal(assignmentEvent.from_status, 'OFFER_SENT');
+  assert.equal(assignmentEvent.to_status, 'ASSIGNED');
+  assert.equal(assignmentEvent.created_at, '2026-10-20T00:00:00.000Z');
 
   const collected = f.service.transition({
     delivery_id: pending.delivery_id, action: 'CONFIRM_COLLECTION', idempotency_key: 'collect-journey'
@@ -608,4 +613,43 @@ test('valid cancellation is limited to RECEIVED and exceptional delivery can be 
     delivery_id: pending.delivery_id, driver_id: 'driver2', idempotency_key: 'new-driver-after-failure'
   }, f.dispatcher);
   assert.equal(nextOffer.status, 'OFFERED');
+});
+
+
+test('expiry transition is recovered if the offer status write is interrupted', () => {
+  const f = fixture();
+  const pending = prepareDispatch(f, 'expiry-interrupted');
+  const offer = f.dispatchService.createOffer({
+    delivery_id: pending.delivery_id, driver_id: 'driver', idempotency_key: 'offer-expiry-interrupted'
+  }, f.dispatcher);
+  f.setNow(offer.expires_at);
+  const originalUpdate = f.store.updateOffer.bind(f.store);
+  let failOnce = true;
+  f.store.updateOffer = function (value, expectedStatus) {
+    if (value.status === 'EXPIRED' && failOnce) {
+      failOnce = false;
+      throw Object.assign(new Error('simulated expiry status write interruption'), { code: 'SIMULATED_EXPIRY_WRITE_FAILURE' });
+    }
+    return originalUpdate(value, expectedStatus);
+  };
+  assert.throws(() => f.dispatchService.expireOffer(offer.offer_id, f.system),
+    error => error.code === 'SIMULATED_EXPIRY_WRITE_FAILURE');
+  assert.equal(f.db.deliveries.get(pending.delivery_id).status, 'DISPATCH_PENDING');
+  assert.equal(f.db.offers.get(offer.offer_id).status, 'OFFERED');
+  const recovered = f.dispatchService.expireOffer(offer.offer_id, f.system);
+  assert.equal(recovered.status, 'DISPATCH_PENDING');
+  assert.equal(f.db.offers.get(offer.offer_id).status, 'EXPIRED');
+});
+
+test('corrupt offer expiry fails closed', () => {
+  const f = fixture();
+  const pending = prepareDispatch(f, 'corrupt-expiry');
+  const offer = f.dispatchService.createOffer({
+    delivery_id: pending.delivery_id, driver_id: 'driver', idempotency_key: 'offer-corrupt-expiry'
+  }, f.dispatcher);
+  const persisted = f.db.offers.get(offer.offer_id);
+  persisted.expires_at = 'not-a-timestamp';
+  assert.throws(() => f.dispatchService.respond({
+    offer_id: offer.offer_id, response: 'ACCEPT', idempotency_key: 'corrupt-expiry-accept'
+  }, f.driver), error => error.code === 'DRIVER_OFFER_RECORD_INVALID');
 });
