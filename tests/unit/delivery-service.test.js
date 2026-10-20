@@ -124,16 +124,23 @@ function fixture() {
     return value;
   }
 
+  db.drivers.add('driver:CO-A');
+  db.drivers.add('driver2:CO-A');
   let n = 0;
+  const clock = () => new Date(nowMs);
+  const idFactory = () => 'ID-' + (++n);
+  const service = c.createDeliveryService({ store, actorResolver, clock, idFactory });
+  const dispatchService = c.createDispatchService({ store, deliveryService: service, actorResolver, clock, idFactory, offerTtlMs: 120000 });
+  const outboxService = c.createNotificationOutboxService({
+    store, clock, baseDelayMs: 1000, maxAttempts: 3,
+    sender: (notification, idempotencyKey) => ({ accepted: true, provider_message_id: 'MSG-' + idempotencyKey })
+  });
   return {
     db,
     actorResolver,
-    service: c.createDeliveryService({
-      store,
-      actorResolver,
-      clock: () => new Date(nowMs),
-      idFactory: () => 'ID-' + (++n)
-    }),
+    service,
+    dispatchService,
+    outboxService,
     actor: actorResolver.resolve(invocation('admin-a@example.test'), 'CO-A'),
     otherActor: actorResolver.resolve(invocation('other@example.test'), 'CO-B'),
     driver: actorResolver.resolve(invocation('driver@example.test'), 'CO-A'),
