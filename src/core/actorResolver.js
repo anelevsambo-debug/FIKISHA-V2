@@ -85,6 +85,26 @@ function createTrustedActorResolver(deps) {
     return actor;
   }
 
+  function resolveSystemActor(invocationContext, companyId) {
+    if (typeof deps.getAuthenticatedSystemPrincipal !== "function") {
+      throw new FikishaError("SYSTEM_IDENTITY_PROVIDER_REQUIRED");
+    }
+    if (typeof companyId !== "string" || !companyId.trim()) throw new FikishaError("COMPANY_CONTEXT_REQUIRED");
+    var principal;
+    try { principal = deps.getAuthenticatedSystemPrincipal(invocationContext); }
+    catch (error) { throw new FikishaError(error && error.code ? error.code : "SYSTEM_IDENTITY_PROVIDER_FAILURE"); }
+    if (typeof principal !== "string" || !principal.trim()) throw new FikishaError("SYSTEM_IDENTITY_REQUIRED");
+    var actor = Object.freeze({
+      actor_id: "SYSTEM:" + principal.trim(),
+      email: "",
+      company_id: companyId.trim(),
+      role: "SYSTEM",
+      active: true
+    });
+    trustedActors.add(actor);
+    return actor;
+  }
+
   function assertTrusted(actor) {
     if (!actor || (typeof actor !== "object") || !trustedActors.has(actor)) {
       throw new FikishaError("UNTRUSTED_ACTOR_CONTEXT");
@@ -94,6 +114,7 @@ function createTrustedActorResolver(deps) {
 
   return Object.freeze({
     resolve: resolve,
+    resolveSystemActor: resolveSystemActor,
     resolvePlatformAdmin: resolvePlatformAdmin,
     isTrusted: function (actor) {
       return !!actor && typeof actor === "object" && trustedActors.has(actor);
