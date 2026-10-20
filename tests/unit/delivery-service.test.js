@@ -9,10 +9,63 @@ for (const file of ['errors.js', 'ids.js', 'validators.js', 'permissions.js', 's
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/core', file), 'utf8'), c);
 }
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/deliveries/service.js'), 'utf8'), c);
+vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/deliveries/dispatchService.js'), 'utf8'), c);
+vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/notifications/outboxService.js'), 'utf8'), c);
 
 function fixture() {
-  const db = { deliveries: new Map(), events: [], keys: new Map(), proofs: new Set(), drivers: new Set() };
+  const db = { deliveries: new Map(), events: [], keys: new Map(), proofs: new Set(), drivers: new Set(), offers: new Map(), outbox: new Map() };
+  let nowMs = Date.parse('2026-10-20T00:00:00Z');
   const store = {
+    runExclusive: work => work(),
+    getOffer: id => db.offers.get(id) || null,
+    getOfferByRequestKey: (company, key) => Array.from(db.offers.values()).find(o => o.company_id === company && o.request_key === key) || null,
+    listOffersForDelivery: id => Array.from(db.offers.values()).filter(o => o.delivery_id === id),
+    createOffer(offer) {
+      const prior = db.offers.get(offer.offer_id) || this.getOfferByRequestKey(offer.company_id, offer.request_key);
+      if (prior) {
+        if (prior.company_id !== offer.company_id || prior.delivery_id !== offer.delivery_id || prior.driver_id !== offer.driver_id || prior.request_key !== offer.request_key) {
+          throw Object.assign(new Error('offer conflict'), { code: 'DRIVER_OFFER_ID_CONFLICT' });
+        }
+        return { created: false, offer: prior };
+      }
+      db.offers.set(offer.offer_id, Object.assign({}, offer));
+      return { created: true, offer: db.offers.get(offer.offer_id) };
+    },
+    updateOffer(offer, expectedStatus) {
+      const prior = db.offers.get(offer.offer_id);
+      if (!prior) throw Object.assign(new Error('missing offer'), { code: 'DRIVER_OFFER_NOT_FOUND' });
+      if (expectedStatus && prior.status !== expectedStatus) throw Object.assign(new Error('offer status conflict'), { code: 'DRIVER_OFFER_STATUS_CONFLICT' });
+      db.offers.set(offer.offer_id, Object.assign({}, offer));
+      return offer;
+    },
+    enqueueNotification(n) {
+      const prior = db.outbox.get(n.notification_id);
+      if (prior) return { created: false, notification: prior };
+      db.outbox.set(n.notification_id, Object.assign({}, n));
+      return { created: true, notification: db.outbox.get(n.notification_id) };
+    },
+    getNotification: id => db.outbox.get(id) || null,
+    listDueNotifications(now, limit) {
+      return Array.from(db.outbox.values()).filter(n =>
+        (n.status === 'PENDING' || n.status === 'RETRY') &&
+        (!n.next_attempt_at || n.next_attempt_at <= now) ||
+        (n.status === 'PROCESSING' && n.lease_until && n.lease_until <= now)
+      ).slice(0, limit);
+    },
+    claimNotification(id, now, lease) {
+      const n = db.outbox.get(id);
+      if (!n) throw Object.assign(new Error('missing notification'), { code: 'NOTIFICATION_NOT_FOUND' });
+      if (n.status === 'PROCESSING' && n.lease_until > now) return null;
+      if (!['PENDING', 'RETRY'].includes(n.status) && !(n.status === 'PROCESSING' && n.lease_until <= now)) return null;
+      n.status = 'PROCESSING'; n.attempt_count = Number(n.attempt_count || 0) + 1; n.lease_until = lease;
+      return Object.assign({}, n);
+    },
+    updateNotification(n, expectedStatus) {
+      const prior = db.outbox.get(n.notification_id);
+      if (expectedStatus && prior.status !== expectedStatus) throw Object.assign(new Error('notification status conflict'), { code: 'NOTIFICATION_STATUS_CONFLICT' });
+      db.outbox.set(n.notification_id, Object.assign({}, n));
+      return n;
+    },
     getDelivery: id => db.deliveries.get(id) || null,
     insertDelivery: d => {
       if (db.deliveries.has(d.delivery_id)) throw Object.assign(new Error('conflict'), { code: 'DELIVERY_ID_CONFLICT' });
@@ -56,7 +109,10 @@ function fixture() {
   const memberships = new Map([
     ['admin-a@example.test', { actor_id: 'admin-1', email: 'admin-a@example.test', company_id: 'CO-A', role: 'COMPANY_ADMIN', active: true }],
     ['other@example.test', { actor_id: 'other', email: 'other@example.test', company_id: 'CO-B', role: 'COMPANY_ADMIN', active: true }],
-    ['driver@example.test', { actor_id: 'driver', email: 'driver@example.test', company_id: 'CO-A', role: 'DRIVER', active: true }]
+    ['driver@example.test', { actor_id: 'driver', email: 'driver@example.test', company_id: 'CO-A', role: 'DRIVER', active: true }],
+    ['driver2@example.test', { actor_id: 'driver2', email: 'driver2@example.test', company_id: 'CO-A', role: 'DRIVER', active: true }],
+    ['dispatcher@example.test', { actor_id: 'dispatcher', email: 'dispatcher@example.test', company_id: 'CO-A', role: 'DISPATCHER', active: true }],
+    ['system@example.test', { actor_id: 'system', email: 'system@example.test', company_id: 'CO-A', role: 'SYSTEM', active: true }]
   ]);
   const actorResolver = c.createTrustedActorResolver({
     getAuthenticatedEmail: invocation => identities.get(invocation) || '',
@@ -75,12 +131,18 @@ function fixture() {
     service: c.createDeliveryService({
       store,
       actorResolver,
-      clock: () => new Date('2026-10-20T00:00:00Z'),
+      clock: () => new Date(nowMs),
       idFactory: () => 'ID-' + (++n)
     }),
     actor: actorResolver.resolve(invocation('admin-a@example.test'), 'CO-A'),
     otherActor: actorResolver.resolve(invocation('other@example.test'), 'CO-B'),
     driver: actorResolver.resolve(invocation('driver@example.test'), 'CO-A'),
+    driver2: actorResolver.resolve(invocation('driver2@example.test'), 'CO-A'),
+    dispatcher: actorResolver.resolve(invocation('dispatcher@example.test'), 'CO-A'),
+    system: actorResolver.resolve(invocation('system@example.test'), 'CO-A'),
+    dispatchService: null,
+    outboxService: null,
+    setNow(value) { nowMs = Date.parse(value); },
     input: {
       sender_name: 'Sender', sender_phone: '+26770000001',
       recipient_name: 'Recipient', recipient_phone: '+26770000002',
