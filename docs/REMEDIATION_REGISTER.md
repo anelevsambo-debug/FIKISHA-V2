@@ -192,6 +192,11 @@ Tests use Node.js VM and fake registry/store adapters. They prove the authorizat
 | Missing/invalid registry bindings do not fall back | Added missing-ID, registry-failure and foreign-binding tests | UNKNOWN |
 | Direct Drive/Sheets access blocked by ACLs | Not testable with current access | UNKNOWN |
 
+### CI verification
+
+- [GitHub Actions run #215](https://github.com/anelevsambo-debug/FIKISHA-V2/actions/runs/39436918301) ran on exact current code head `6077fd68366a5f82df7260a93a7a8d22625ce087`: 81 tests passed, 0 failed, 0 skipped; `npm run check:legacy-terms` passed.
+- Earlier run #213 exposed a test-harness cross-VM object-prototype assertion, not a production-code failure. The assertion was corrected to compare serialized state, and run #215 passed.
+
 ### Closure decision
 
 P0-02 is **not closed**. Logical code-level isolation has been strengthened, but this task's live Google resource access-control requirement cannot be proven without an authorized non-production Google workspace and separate Company A / Company B accounts. Resource description markers do not replace ACLs. No real customer records or production permissions were changed. P0-03 and other remediation IDs were not started.
