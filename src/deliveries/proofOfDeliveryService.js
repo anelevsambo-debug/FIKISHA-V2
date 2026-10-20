@@ -41,6 +41,12 @@ function createProofOfDeliveryService(deps) {
     if (actor.role !== "DRIVER" || actor.actor_id !== delivery.driver_id) throw new FikishaError("ASSIGNED_DRIVER_REQUIRED");
   }
   function validId(value) { return typeof value === "string" && value.length > 0 && value.length <= 200 && !/[\\r\\n]/.test(value); }
+  function constantTimeEqual(a, b) {
+    a = String(a || ""); b = String(b || "");
+    var difference = a.length ^ b.length, length = Math.max(a.length, b.length);
+    for (var i = 0; i < length; i++) difference |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+    return difference === 0;
+  }
   function safeChallenge(challenge) {
     if (!challenge || !validId(challenge.challenge_id) || !validId(challenge.delivery_id) ||
         !validId(challenge.company_id) || !validId(challenge.issued_to_fingerprint) ||
@@ -92,7 +98,7 @@ function createProofOfDeliveryService(deps) {
     if (metadata.delivery_id !== delivery.delivery_id || metadata.company_id !== delivery.company_id) {
       throw new FikishaError("DRIVE_EVIDENCE_BINDING_INVALID");
     }
-    deps.drive.assertRestrictedAccess(fileId, { company_id: delivery.company_id, delivery_id: delivery.delivery_id });
+    deps.drive.assertRestrictedAccess(fileId, { company_id: delivery.company_id, delivery_id: delivery.delivery_id, allowed_roles: ["COMPANY_ADMIN", "DISPATCHER", "ASSIGNED_DRIVER"], allow_public: false, allow_link_sharing: false });
     return {
       evidence_id: deps.idFactory(), company_id: delivery.company_id, delivery_id: delivery.delivery_id,
       challenge_id: challenge.challenge_id, drive_file_id: fileId, evidence_type: evidenceType,
@@ -206,7 +212,7 @@ function createProofOfDeliveryService(deps) {
       }
       var expectedMac = deps.digestOtp("fikisha-pod-v1|" + challenge.company_id + "|" + challenge.delivery_id + "|" +
         challenge.issued_to_fingerprint + "|" + String(args.otp));
-      if (expectedMac !== challenge.otp_mac) {
+      if (!constantTimeEqual(expectedMac, challenge.otp_mac)) {
         challenge.attempt_count = Number(challenge.attempt_count) + 1;
         if (challenge.attempt_count >= challenge.max_attempts) store.invalidateChallenge(challenge.challenge_id, "ATTEMPTS_EXHAUSTED", iso(time));
         else store.updateChallenge(challenge, "ACTIVE");
