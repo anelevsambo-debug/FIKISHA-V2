@@ -6,16 +6,17 @@ FIKISHA-V2 is intended to coordinate real deliveries for multiple companies in B
 
 ## Implemented in this branch
 - Core input validation, role helper, partial lifecycle state machine and tenant-context helper.
-- Delivery service for validated creation, company-scoped idempotency reservation/recovery, guarded transitions and audit-event calls.
-- Google Sheets adapter with schema checks, optimistic version checks, lock-protected create reservation, and duplicate-safe delivery/event writes.
+- Trusted actor resolver contract that checks an injected identity provider against active company membership and rejects caller-created actor objects.
+- Delivery service for validated creation, guarded transitions and audit-event calls.
+- Google Sheets adapter with script-lock-protected idempotency reservation, duplicate-safe create-row/event writes, and retry recovery for partial create operations.
 - Initial company workbook schema initializer and tests that preserve existing data.
 - Outbound Meta WhatsApp Cloud API template adapter (tested with a fake HTTP client only).
 - Fail-closed Apps Script placeholder endpoints with regression tests.
-- GitHub Actions tests using Node.js 24, plus a legacy blockchain-term scan.
-- Engineering anti-loop protocol, stable remediation register and architecture/data model/tenancy/WhatsApp/cost/privacy/operations/launch-gate documents.
+- CI using checkout/setup-node v7, Node.js 24, npm ci, tests and a legacy blockchain-term scan.
+- Engineering anti-loop protocol, stable remediation register and architecture/data-model/tenancy/WhatsApp/cost/privacy/operations/launch-gate documents.
 
 ## Not implemented or live-verified
-- No authenticated operational API or trusted server-side actor/membership resolution. The public POST entrypoint remains disabled and returns WEBHOOK_NOT_CONFIGURED.
+- No authenticated operational API or real trusted identity provider/membership-store adapter is connected. The actor resolver is a tested contract, not proof of end-to-end authentication. The public POST entrypoint remains disabled and returns WEBHOOK_NOT_CONFIGURED.
 - No Google workbook, Drive folder or AppSheet app has been created or verified.
 - No live WhatsApp credentials or messages have been configured.
 - Inbound webhook signature verification, consent/opt-out processing, message status, retry/dead-letter handling, complete company provisioning, AppSheet actions, backups and live two-company isolation tests remain incomplete.
