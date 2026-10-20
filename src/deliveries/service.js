@@ -62,7 +62,7 @@ function createDeliveryService(deps) {
     return delivery;
   }
 
-  function create(input, actor, idempotencyKey) {
+  function createUnlocked(input, actor, idempotencyKey) {
     deps.actorResolver.assertTrusted(actor);
     if (!actor.company_id || actor.active !== true || !["COMPANY_ADMIN", "DISPATCHER"].includes(actor.role)) {
       throw new FikishaError("DELIVERY_CREATE_FORBIDDEN");
@@ -202,7 +202,7 @@ function createDeliveryService(deps) {
     return record.delivery;
   }
 
-  function transition(args, actor) {
+  function transitionUnlocked(args, actor) {
     if (!args || !isNonEmptyString(args.delivery_id) || !isNonEmptyString(args.action)) {
       throw new FikishaError("INVALID_TRANSITION_REQUEST");
     }
@@ -289,6 +289,18 @@ function createDeliveryService(deps) {
     }
     if (record.state !== "IN_PROGRESS") throw new FikishaError("IDEMPOTENCY_STATE_INVALID");
     return resumeTransition(key, record);
+  }
+
+  function runExclusive(work) {
+    return typeof store.runExclusive === "function" ? store.runExclusive(work) : work();
+  }
+
+  function create(input, actor, idempotencyKey) {
+    return runExclusive(function () { return createUnlocked(input, actor, idempotencyKey); });
+  }
+
+  function transition(args, actor) {
+    return runExclusive(function () { return transitionUnlocked(args, actor); });
   }
 
   function get(id, actor) {
