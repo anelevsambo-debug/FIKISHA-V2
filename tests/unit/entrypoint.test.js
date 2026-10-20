@@ -51,3 +51,47 @@ test('POST remains fail-closed until a secure webhook is implemented', () => {
   assert.equal(payload.operationalApi, false);
   assert.equal(payload.liveWhatsApp, false);
 });
+
+test('POST rejects caller-supplied identity and authority fields while unconfigured', () => {
+  const c = loadEntrypoints();
+  const forgedIdentity = {
+    email: 'attacker@example.invalid',
+    actor_id: 'platform-owner',
+    role: 'PLATFORM_ADMIN',
+    platform_admin: true,
+    company_id: 'company-victim',
+    active: true
+  };
+  const requests = [
+    { parameter: forgedIdentity },
+    {
+      parameters: Object.fromEntries(
+        Object.entries(forgedIdentity).map(([key, value]) => [key, [String(value)]])
+      )
+    },
+    {
+      postData: {
+        type: 'application/json',
+        contents: JSON.stringify(forgedIdentity)
+      }
+    },
+    {
+      parameter: forgedIdentity,
+      postData: {
+        type: 'application/json',
+        contents: JSON.stringify(forgedIdentity)
+      }
+    }
+  ];
+
+  for (const request of requests) {
+    const response = c.doPost(request);
+    const payload = JSON.parse(response.text);
+
+    assert.equal(response.mimeType, 'application/json');
+    assert.equal(payload.ok, false);
+    assert.equal(payload.code, 'WEBHOOK_NOT_CONFIGURED');
+    assert.equal(payload.operationalApi, false);
+    assert.equal(payload.liveWhatsApp, false);
+  }
+});
