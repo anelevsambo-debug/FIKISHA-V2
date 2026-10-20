@@ -14,7 +14,10 @@ Headers must occupy row 1 exactly. The adapter does not provision missing sheets
 
 ## Invariants
 - Every delivery has a stable ID and company ID.
-- The service checks actor activity, role and matching company ID. This check does not authenticate the actor object; only a future trusted entrypoint may construct the actor context.
+- Delivery service operations require an actor object minted by the trusted actor resolver; caller-created actor objects are rejected.
+- The resolver checks the authenticated email returned by an injected identity provider against an active company membership record and verifies that the requested company matches the membership.
+- The injected identity provider must read a trusted authentication boundary; it must not simply return an email or actor field from an untrusted request.
+- No real authentication provider or platform membership-store adapter is connected yet, and the public Apps Script entrypoint remains disabled. Therefore, the resolver contract is not proof of end-to-end authentication.
 - State transitions are checked against the state machine.
 - Completion requires an existing verified proof record matching delivery and company.
 - Assignment requires an active driver in the same company.
@@ -24,7 +27,7 @@ Headers must occupy row 1 exactly. The adapter does not provision missing sheets
 
 ## Create-operation idempotency and recovery
 
-The Sheets adapter now implements a script-lock-protected reservation for a company-scoped idempotency key. The reservation stores an operation state and the intended delivery/event payload in the existing `result_json` cell, without changing the sheet header schema.
+The Sheets adapter implements a script-lock-protected reservation for a company-scoped idempotency key. The reservation stores an operation state and intended delivery/event payload in the existing `result_json` cell, without changing the sheet header schema.
 
 The create flow is:
 1. Reserve the key as `IN_PROGRESS` under a script lock, or load the existing reservation.
@@ -38,4 +41,4 @@ Unit tests cover reservation reuse, event/delivery duplicate protection, and rec
 
 ## Known limitations
 
-Google Sheets does not provide relational transactions. A script lock makes each protected operation's read/check/write sequence mutually exclusive within the same Apps Script project, but does not turn the delivery, event and idempotency records into one transaction. The create flow has a recoverable reservation; transition writes can still update a delivery before the corresponding audit event is appended. A production release requires real concurrency tests, failure/recovery verification in Apps Script, and a decision on whether Sheets is adequate for the required consistency guarantees.
+Google Sheets does not provide relational transactions. A script lock makes each protected operation's read/check/write sequence mutually exclusive within the same Apps Script project, but does not turn delivery, event and idempotency records into one transaction. The create flow has a recoverable reservation; transition updates can still modify a delivery before the corresponding audit event is appended. A production release requires real concurrency tests, failure/recovery verification in Apps Script, and a decision on whether Sheets is adequate for the required consistency guarantees.
