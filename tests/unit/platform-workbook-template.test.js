@@ -89,7 +89,7 @@ test('repeat initialization preserves existing platform records', () => {
   c.initializePlatformWorkbook(spreadsheet);
 
   assert.deepEqual(companies.getRange(2, 1, 1, row.length).getValues(), [row]);
-  assert.equal(spreadsheet._sheets.size, 4);
+  assert.equal(spreadsheet._sheets.size, 5);
 });
 
 test('incompatible platform schema fails closed without overwriting existing rows', () => {
