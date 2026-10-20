@@ -40,7 +40,7 @@ function createProofOfDeliveryService(deps) {
     trusted(actor, delivery.company_id);
     if (actor.role !== "DRIVER" || actor.actor_id !== delivery.driver_id) throw new FikishaError("ASSIGNED_DRIVER_REQUIRED");
   }
-  function validId(value) { return typeof value === "string" && value.length > 0 && value.length <= 200 && !/[\\r\\n]/.test(value); }
+  function validId(value) { return typeof value === "string" && value.length > 0 && value.length <= 200 && !/[\r\n]/.test(value); }
   function constantTimeEqual(a, b) {
     a = String(a || ""); b = String(b || "");
     var difference = a.length ^ b.length, length = Math.max(a.length, b.length);
@@ -125,7 +125,7 @@ function createProofOfDeliveryService(deps) {
         if (prior.status === "ACTIVE") store.invalidateChallenge(prior.challenge_id, "SUPERSEDED", iso(time));
       });
       var code = String(deps.randomCode());
-      if (!/^\\d{6}$/.test(code)) throw new FikishaError("OTP_GENERATOR_INVALID");
+      if (!/^\d{6}$/.test(code)) throw new FikishaError("OTP_GENERATOR_INVALID");
       var challenge = {
         challenge_id: deps.idFactory(), company_id: delivery.company_id, delivery_id: delivery.delivery_id,
         issued_to_fingerprint: recipientFingerprint, issued_by_driver_id: actor.actor_id,
@@ -222,7 +222,7 @@ function createProofOfDeliveryService(deps) {
         store.invalidateChallenge(challenge.challenge_id, "ATTEMPTS_EXHAUSTED", iso(time));
         throw new FikishaError("OTP_ATTEMPTS_EXHAUSTED");
       }
-      if (!/^\\d{6}$/.test(String(args.otp || ""))) {
+      if (!/^\d{6}$/.test(String(args.otp || ""))) {
         challenge.attempt_count = Number(challenge.attempt_count) + 1;
         if (challenge.attempt_count >= challenge.max_attempts) store.invalidateChallenge(challenge.challenge_id, "ATTEMPTS_EXHAUSTED", iso(time));
         else store.updateChallenge(challenge, "ACTIVE");
