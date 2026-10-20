@@ -46,7 +46,6 @@ function fixture() {
       db.events.push(event);
       return { created: true, event };
     },
-    saveDelivery() { throw new Error('not used by create-recovery test'); },
     appendEvent() { throw new Error('not used by create-recovery test'); },
     isProofVerified() { return false; },
     isActiveDriver() { return false; }

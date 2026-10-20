@@ -190,6 +190,11 @@ function createDeliveryService(deps) {
       state: "COMPLETED",
       operation_type: "TRANSITION",
       operation_id: record.operation_id,
+      delivery_id: record.delivery_id,
+      expected_version: record.expected_version,
+      from_status: record.from_status,
+      delivery: record.delivery,
+      event: record.event,
       result: record.delivery,
       created_at: record.created_at,
       updated_at: completedAt
