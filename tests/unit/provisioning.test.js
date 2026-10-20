@@ -98,7 +98,7 @@ function fixture(options = {}) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/companies/provisioning.js'), 'utf8'), context);
 
   const platform = {
-    company: { company_id: 'CO-A', name: 'Company A', status: 'ACTIVE' },
+    company: options.company || { company_id: 'CO-A', name: 'Company A', status: 'ACTIVE' },
     job: options.job || null,
     resources: null,
     getCompany(id) { return id === this.company.company_id ? this.company : null; },
@@ -210,4 +210,47 @@ test('provisioner rejects a non-platform administrator', () => {
     () => f.provisioner.provision('CO-A', f.companyAdmin),
     error => error.code === 'PLATFORM_ADMIN_REQUIRED'
   );
+});
+
+test('provisioner rejects disabled companies before creating any resources', () => {
+  const f = fixture({ company: { company_id: 'CO-A', name: 'Company A', status: 'DISABLED' } });
+  assert.throws(
+    () => f.provisioner.provision('CO-A', f.admin),
+    error => error.code === 'COMPANY_NOT_ACTIVE'
+  );
+  assert.equal(f.root.folders.length, 0);
+  assert.equal(f.platform.job, null);
+});
+
+test('provisioner rejects a mismatched registry company identity', () => {
+  const f = fixture({ company: { company_id: 'CO-B', name: 'Company B', status: 'ACTIVE' } });
+  assert.throws(
+    () => f.provisioner.provision('CO-A', f.admin),
+    error => error.code === 'COMPANY_REGISTRY_BINDING_MISMATCH'
+  );
+  assert.equal(f.root.folders.length, 0);
+});
+
+test('provisioner rejects a saved workbook ID bound to another company', () => {
+  const f = fixture({
+    existingFolder: true,
+    existingFolderDescription: folderMarker,
+    existingWorkbook: true,
+    existingWorkbookDescription: 'FIKISHA-V2|company_id=CO-B|resource=operations-workbook',
+    job: { company_id: 'CO-A', folder_id: 'folder-existing', workbook_id: 'file-existing', status: 'FAILED' }
+  });
+  assert.throws(
+    () => f.provisioner.provision('CO-A', f.admin),
+    error => error.code === 'PROVISIONING_RESOURCE_IDENTITY_MISMATCH'
+  );
+  assert.equal(f.platform.resources, null);
+});
+
+test('provisioner rejects a provisioning job bound to another company', () => {
+  const f = fixture({ job: { company_id: 'CO-B', status: 'FAILED' } });
+  assert.throws(
+    () => f.provisioner.provision('CO-A', f.admin),
+    error => error.code === 'PROVISIONING_JOB_COMPANY_MISMATCH'
+  );
+  assert.equal(f.root.folders.length, 0);
 });
