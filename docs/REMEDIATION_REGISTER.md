@@ -287,3 +287,50 @@ Run CI on the exact PR head and inspect scenario-specific results. Keep the PR d
 
 - **Latest scenario run before this register update:** exact code/test HEAD `22754bc0034f64f57663f5019a5463e35b260cda`, GitHub Actions run #278 succeeded: 118 passed, 0 failed, 0 skipped; legacy-term scan passed. This run includes offer-expiry corruption rejection, expiry-write recovery, event actor/from/to/time assertions, lifecycle/reoffer, and outbox recovery/exhaustion tests.
 - The candidate PR remains draft/unmerged and stacked on the separate runtime-reliability draft PR. A passing mock suite does not close the live Google integration gate.
+
+
+## Proof of delivery — OTP, evidence and authorization — 2026-10-20
+
+**Candidate branch:** `build/proof-of-delivery-otp-evidence`  
+**Parent:** `build/delivery-offers-outbox` at the previously verified lifecycle/outbox candidate head.  
+**Status:** implementation candidate added; CI/review pending at time of register update. Live Google runtime remains unverified.
+
+### Repository findings
+
+- The approved state machine already defines `IN_TRANSIT → DELIVERY_VERIFICATION_PENDING` through `ATTEMPT_DELIVERY`, then `VERIFY_OTP → DELIVERED_VERIFIED`. The prior implementation only checked a basic `ProofOfDelivery` row with a `verified` flag, delivery ID and company ID; there was no OTP challenge service, attempt counter, expiry, Drive metadata/ACL verifier or evidence registry.
+- The delivery service blocks completion unless `store.isProofVerified(proof_id, delivery_id, company_id)` succeeds. This branch strengthens the Sheets implementation so that a proof row alone is insufficient: it must map to a completing/consumed challenge and same-delivery/company verified evidence, including a delivery photo.
+- New workbook tabs: `ProofChallenges` and `ProofEvidence`; existing `ProofOfDelivery` columns and workbook schema version are retained. No existing workbook was opened or migrated.
+
+### Candidate changes
+
+- Added `src/deliveries/proofOfDeliveryService.js` with assigned-driver checks, recipient-bound challenge issue, expiry, five-attempt cap, challenge invalidation, HMAC/MAC storage contract, Drive metadata/ACL checks, evidence registration and recoverable completion.
+- OTP policy: six digits, five-minute default expiry, five failed attempts maximum. OTP plaintext is sent only to the injected sender and is not returned, persisted or logged. Production must provide a cryptographically secure random generator and keyed HMAC backed by a server-only secret; no weak fallback is allowed.
+- Evidence policy: at least one JPEG/PNG `DELIVERY_PHOTO`; optional JPEG/PNG `RECIPIENT_SIGNATURE`. Drive file must be non-trashed, have exactly the server-resolved delivery folder as its only parent, carry trusted company/delivery metadata and pass restricted ACL verification with public/link sharing disabled.
+- Completion records a challenge in `COMPLETING` with one request key and exact evidence list before writing the proof row and invoking the existing state transition. Recovery requires the same request key and evidence list. The Sheets proof guard rechecks challenge and evidence linkage before allowing `DELIVERED_VERIFIED`.
+- Recipient unreachable, missing OTP or failed evidence upload does not complete delivery. The driver must use the existing failed-delivery/escalation/reoffer path. No supervisor override or OTP bypass was added.
+- Added scenario tests for valid proof, wrong and expired OTP, OTP replay, attempt limit, unassigned driver, cross-delivery evidence replay, forged/public Drive references, missing evidence/upload failure, duplicate completion, and interrupted completion/proof-row recovery.
+
+### Required test evidence and limits
+
+| Case | Synthetic test design | Live Google evidence |
+|---|---|---|
+| Valid OTP plus required photo | Test added | Not tested |
+| Wrong OTP and attempts counter | Test added | Not tested |
+| Expired challenge invalidation | Test added | Not tested |
+| OTP reuse/replay and duplicate completion | Test added | Not tested |
+| Rate limit / exhausted challenge | Test added | Not tested |
+| Unauthorized/unassigned driver | Test added | Not tested |
+| Cross-delivery evidence replay | Test added | Not tested |
+| Forged Drive ID, wrong folder, public/link-sharing ACL | Fake metadata/ACL adapter | Not tested |
+| Missing evidence / failed upload | Missing fake file metadata | Not tested |
+| Interrupted completion before proof-row write and before transition | Injected fake-store/service failures | Not tested |
+| Real Drive permission and folder isolation | Not exercised | UNKNOWN |
+| Real Apps Script LockService concurrency, trigger and Sheets persistence | Not exercised | UNKNOWN |
+| Actual OTP sender, secret storage, cryptographic RNG/HMAC | Injected test functions only | UNKNOWN |
+| End-to-end authenticated Google invocation | Not exercised; P0-01 remains blocked | UNKNOWN |
+
+### Safety boundary and closure decision
+
+All proof tests use synthetic contact values, a fake sender, fake Drive metadata/ACLs and fake persistence. No real recipients, phone numbers, evidence files, Google Workspace resources or production data were used. These tests are not evidence of live Drive permissions or an operational Google runtime.
+
+**Do not close the delivery journey or enable an endpoint.** The production HMAC/secret and secure-random adapters, OTP delivery, actual Drive upload/ACL adapter, trusted identity entrypoint (P0-01), and authorized synthetic Google end-to-end tests remain mandatory gates. `doPost` remains disabled. PR must remain draft/unmerged until CI, code review and separately authorized runtime validation.
