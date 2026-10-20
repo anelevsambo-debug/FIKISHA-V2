@@ -710,3 +710,190 @@ test('corrupt offer expiry fails closed', () => {
     offer_id: offer.offer_id, response: 'ACCEPT', idempotency_key: 'corrupt-expiry-accept'
   }, f.driver), error => error.code === 'DRIVER_OFFER_RECORD_INVALID');
 });
+
+
+function prepareProofFixture(f, options = {}) {
+  const pending = prepareDispatch(f, options.key || 'pod');
+  const offer = f.dispatchService.createOffer({
+    delivery_id: pending.delivery_id, driver_id: 'driver', idempotency_key: 'offer-' + (options.key || 'pod')
+  }, f.dispatcher);
+  f.dispatchService.respond({ offer_id: offer.offer_id, response: 'ACCEPT', idempotency_key: 'accept-' + (options.key || 'pod') }, f.driver);
+  f.service.transition({ delivery_id: pending.delivery_id, action: 'CONFIRM_COLLECTION', idempotency_key: 'collect-' + (options.key || 'pod') }, f.driver);
+  f.service.transition({ delivery_id: pending.delivery_id, action: 'START_TRANSIT', idempotency_key: 'transit-' + (options.key || 'pod') }, f.driver);
+  f.service.transition({ delivery_id: pending.delivery_id, action: 'ATTEMPT_DELIVERY', idempotency_key: 'attempt-' + (options.key || 'pod') }, f.driver);
+  let id = 0;
+  const sent = [];
+  const proofService = c.createProofOfDeliveryService({
+    store: f.store, actorResolver: f.actorResolver, deliveryService: options.deliveryService || f.service,
+    clock: () => new Date(f.currentTime()), idFactory: () => 'POD-' + (++id),
+    randomCode: () => '123456', digestOtp: value => 'TEST-HMAC:' + value,
+    otpSender: { send: (phone, code, context) => { sent.push({ phone, code, context }); } },
+    drive: {
+      getDeliveryEvidenceFolder: (companyId, deliveryId) => 'FOLDER:' + companyId + ':' + deliveryId,
+      getFileMetadata: fileId => f.db.driveFiles.has(fileId) ? Object.assign({}, f.db.driveFiles.get(fileId)) : null,
+      assertRestrictedAccess: fileId => {
+        const file = f.db.driveFiles.get(fileId);
+        if (!file || file.restricted !== true) throw Object.assign(new Error('access not restricted'), { code: 'DRIVE_ACCESS_NOT_RESTRICTED' });
+      }
+    },
+    ttlMs: 300000, maxAttempts: 5
+  });
+  const challenge = proofService.issueChallenge({ delivery_id: pending.delivery_id }, f.driver);
+  function addPhoto(fileId = 'FILE:' + pending.delivery_id) {
+    f.db.driveFiles.set(fileId, {
+      id: fileId, mime_type: 'image/jpeg', parent_ids: ['FOLDER:CO-A:' + pending.delivery_id],
+      delivery_id: pending.delivery_id, company_id: 'CO-A', trashed: false, restricted: true
+    });
+    return proofService.registerEvidence({ challenge_id: challenge.challenge_id, drive_file_id: fileId, evidence_type: 'DELIVERY_PHOTO' }, f.driver);
+  }
+  return { pending, challenge, proofService, sent, addPhoto };
+}
+
+test('valid OTP plus same-delivery restricted photo completes once and never persists plaintext OTP', () => {
+  const f = fixture();
+  const p = prepareProofFixture(f, { key: 'valid-proof' });
+  const evidence = p.addPhoto();
+  const result = p.proofService.completeDelivery({
+    challenge_id: p.challenge.challenge_id, otp: p.sent[0].code,
+    evidence_ids: [evidence.evidence_id], idempotency_key: 'pod-complete-valid'
+  }, f.driver);
+  assert.equal(result.status, 'DELIVERED_VERIFIED');
+  assert.equal(f.db.challenges.get(p.challenge.challenge_id).status, 'CONSUMED');
+  assert.equal(JSON.stringify(f.db.challenges.get(p.challenge.challenge_id)).includes('123456'), false);
+  assert.equal(f.db.events.filter(e => e.to_status === 'DELIVERED_VERIFIED').length, 1);
+});
+
+test('wrong OTP is rejected and increments attempts without completing delivery', () => {
+  const f = fixture();
+  const p = prepareProofFixture(f, { key: 'wrong-otp' });
+  const evidence = p.addPhoto();
+  assert.throws(() => p.proofService.completeDelivery({
+    challenge_id: p.challenge.challenge_id, otp: '000000', evidence_ids: [evidence.evidence_id], idempotency_key: 'wrong-otp-1'
+  }, f.driver), error => error.code === 'OTP_INVALID');
+  assert.equal(f.db.challenges.get(p.challenge.challenge_id).attempt_count, 1);
+  assert.equal(f.db.deliveries.get(p.pending.delivery_id).status, 'DELIVERY_VERIFICATION_PENDING');
+});
+
+test('expired OTP is invalidated and cannot complete delivery', () => {
+  const f = fixture();
+  const p = prepareProofFixture(f, { key: 'expired-otp' });
+  const evidence = p.addPhoto();
+  f.setNow(p.challenge.expires_at);
+  assert.throws(() => p.proofService.completeDelivery({
+    challenge_id: p.challenge.challenge_id, otp: p.sent[0].code, evidence_ids: [evidence.evidence_id], idempotency_key: 'expired-otp-1'
+  }, f.driver), error => error.code === 'OTP_EXPIRED');
+  assert.equal(f.db.challenges.get(p.challenge.challenge_id).status, 'INVALIDATED');
+  assert.equal(f.db.deliveries.get(p.pending.delivery_id).status, 'DELIVERY_VERIFICATION_PENDING');
+});
+
+test('consumed OTP cannot be replayed with a different completion key', () => {
+  const f = fixture();
+  const p = prepareProofFixture(f, { key: 'replay-otp' });
+  const evidence = p.addPhoto();
+  const request = { challenge_id: p.challenge.challenge_id, otp: p.sent[0].code, evidence_ids: [evidence.evidence_id], idempotency_key: 'pod-replay-original' };
+  p.proofService.completeDelivery(request, f.driver);
+  assert.throws(() => p.proofService.completeDelivery(Object.assign({}, request, { idempotency_key: 'pod-replay-new-key' }), f.driver),
+    error => error.code === 'PROOF_CHALLENGE_ALREADY_USED');
+  assert.equal(f.db.events.filter(e => e.to_status === 'DELIVERED_VERIFIED').length, 1);
+});
+
+test('OTP attempt limit invalidates the challenge after five incorrect attempts', () => {
+  const f = fixture();
+  const p = prepareProofFixture(f, { key: 'otp-limit' });
+  const evidence = p.addPhoto();
+  for (let i = 0; i < 5; i++) {
+    assert.throws(() => p.proofService.completeDelivery({
+      challenge_id: p.challenge.challenge_id, otp: '000000', evidence_ids: [evidence.evidence_id], idempotency_key: 'otp-limit-' + i
+    }, f.driver), error => error.code === 'OTP_INVALID');
+  }
+  assert.equal(f.db.challenges.get(p.challenge.challenge_id).status, 'INVALIDATED');
+  assert.throws(() => p.proofService.completeDelivery({
+    challenge_id: p.challenge.challenge_id, otp: p.sent[0].code, evidence_ids: [evidence.evidence_id], idempotency_key: 'otp-limit-final'
+  }, f.driver), error => error.code === 'PROOF_CHALLENGE_INVALID');
+});
+
+test('unauthorized and unassigned driver cannot issue a challenge or submit proof', () => {
+  const f = fixture();
+  const p = prepareProofFixture(f, { key: 'wrong-driver' });
+  assert.throws(() => p.proofService.issueChallenge({ delivery_id: p.pending.delivery_id }, f.driver2),
+    error => error.code === 'ASSIGNED_DRIVER_REQUIRED');
+  const evidence = p.addPhoto();
+  assert.throws(() => p.proofService.completeDelivery({
+    challenge_id: p.challenge.challenge_id, otp: p.sent[0].code, evidence_ids: [evidence.evidence_id], idempotency_key: 'wrong-driver-complete'
+  }, f.driver2), error => error.code === 'ASSIGNED_DRIVER_REQUIRED');
+  assert.equal(f.db.deliveries.get(p.pending.delivery_id).status, 'DELIVERY_VERIFICATION_PENDING');
+});
+
+test('evidence from another delivery cannot be replayed against a different challenge', () => {
+  const f = fixture();
+  const a = prepareProofFixture(f, { key: 'cross-a' });
+  const evidenceA = a.addPhoto('FILE-CROSS-A');
+  const b = prepareProofFixture(f, { key: 'cross-b' });
+  assert.throws(() => b.proofService.completeDelivery({
+    challenge_id: b.challenge.challenge_id, otp: b.sent[0].code, evidence_ids: [evidenceA.evidence_id], idempotency_key: 'cross-delivery-replay'
+  }, f.driver), error => error.code === 'PROOF_EVIDENCE_BINDING_INVALID');
+  assert.equal(f.db.deliveries.get(b.pending.delivery_id).status, 'DELIVERY_VERIFICATION_PENDING');
+});
+
+test('forged or publicly shared Drive references are rejected before evidence registration', () => {
+  const f = fixture();
+  const p = prepareProofFixture(f, { key: 'forged-drive' });
+  assert.throws(() => p.proofService.registerEvidence({
+    challenge_id: p.challenge.challenge_id, drive_file_id: 'FORGED-ID', evidence_type: 'DELIVERY_PHOTO'
+  }, f.driver), error => error.code === 'DRIVE_EVIDENCE_REFERENCE_INVALID');
+  f.db.driveFiles.set('PUBLIC-FILE', {
+    id: 'PUBLIC-FILE', mime_type: 'image/jpeg', parent_ids: ['FOLDER:CO-A:' + p.pending.delivery_id],
+    delivery_id: p.pending.delivery_id, company_id: 'CO-A', trashed: false, restricted: false
+  });
+  assert.throws(() => p.proofService.registerEvidence({
+    challenge_id: p.challenge.challenge_id, drive_file_id: 'PUBLIC-FILE', evidence_type: 'DELIVERY_PHOTO'
+  }, f.driver), error => error.code === 'DRIVE_ACCESS_NOT_RESTRICTED');
+  assert.equal(f.db.proofEvidence.size, 0);
+});
+
+test('missing evidence and failed Drive upload cannot complete delivery', () => {
+  const f = fixture();
+  const p = prepareProofFixture(f, { key: 'missing-evidence' });
+  assert.throws(() => p.proofService.completeDelivery({
+    challenge_id: p.challenge.challenge_id, otp: p.sent[0].code, evidence_ids: [], idempotency_key: 'missing-evidence'
+  }, f.driver), error => error.code === 'PROOF_EVIDENCE_REQUIRED');
+  assert.throws(() => p.proofService.registerEvidence({
+    challenge_id: p.challenge.challenge_id, drive_file_id: 'UPLOAD-FAILED-NO-FILE', evidence_type: 'DELIVERY_PHOTO'
+  }, f.driver), error => error.code === 'DRIVE_EVIDENCE_REFERENCE_INVALID');
+  assert.equal(f.db.deliveries.get(p.pending.delivery_id).status, 'DELIVERY_VERIFICATION_PENDING');
+});
+
+test('duplicate completion request is idempotent and creates one completion event', () => {
+  const f = fixture();
+  const p = prepareProofFixture(f, { key: 'duplicate-completion' });
+  const evidence = p.addPhoto();
+  const request = { challenge_id: p.challenge.challenge_id, otp: p.sent[0].code, evidence_ids: [evidence.evidence_id], idempotency_key: 'duplicate-completion-key' };
+  const first = p.proofService.completeDelivery(request, f.driver);
+  const second = p.proofService.completeDelivery(request, f.driver);
+  assert.equal(first.status, 'DELIVERED_VERIFIED');
+  assert.equal(second.status, 'DELIVERED_VERIFIED');
+  assert.equal(f.db.events.filter(e => e.to_status === 'DELIVERED_VERIFIED').length, 1);
+});
+
+test('interrupted proof completion recovers using the same challenge, evidence and idempotency key', () => {
+  const f = fixture();
+  let failOnce = true;
+  const interruptedDeliveryService = {
+    get: f.service.get,
+    transition(args, actor) {
+      if (args.action === 'VERIFY_OTP' && failOnce) {
+        failOnce = false;
+        throw Object.assign(new Error('simulated completion interruption'), { code: 'SIMULATED_COMPLETION_INTERRUPTION' });
+      }
+      return f.service.transition(args, actor);
+    }
+  };
+  const p = prepareProofFixture(f, { key: 'recovery-proof', deliveryService: interruptedDeliveryService });
+  const evidence = p.addPhoto();
+  const request = { challenge_id: p.challenge.challenge_id, otp: p.sent[0].code, evidence_ids: [evidence.evidence_id], idempotency_key: 'recovery-proof-key' };
+  assert.throws(() => p.proofService.completeDelivery(request, f.driver), error => error.code === 'SIMULATED_COMPLETION_INTERRUPTION');
+  assert.equal(f.db.challenges.get(p.challenge.challenge_id).status, 'COMPLETING');
+  const recovered = p.proofService.completeDelivery(request, f.driver);
+  assert.equal(recovered.status, 'DELIVERED_VERIFIED');
+  assert.equal(f.db.challenges.get(p.challenge.challenge_id).status, 'CONSUMED');
+});
