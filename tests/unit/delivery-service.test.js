@@ -725,8 +725,8 @@ function prepareProofFixture(f, options = {}) {
   const sent = [];
   const proofService = c.createProofOfDeliveryService({
     store: f.store, actorResolver: f.actorResolver, deliveryService: options.deliveryService || f.service,
-    clock: () => new Date(f.currentTime()), idFactory: () => 'POD-' + (++id),
-    randomCode: () => '123456', digestOtp: value => 'TEST-HMAC:' + value,
+    clock: () => new Date(f.currentTime()), idFactory: () => 'POD-' + (options.key || 'default') + '-' + (++id),
+    randomCode: () => '123456', digestOtp: value => 'TEST-MAC:' + value.split('').reduce((sum, ch) => (sum * 31 + ch.charCodeAt(0)) >>> 0, 7).toString(16),
     otpSender: { send: (phone, code, context) => { sent.push({ phone, code, context }); } },
     drive: {
       getDeliveryEvidenceFolder: (companyId, deliveryId) => 'FOLDER:' + companyId + ':' + deliveryId,
@@ -847,7 +847,7 @@ test('forged or publicly shared Drive references are rejected before evidence re
   });
   assert.throws(() => p.proofService.registerEvidence({
     challenge_id: p.challenge.challenge_id, drive_file_id: 'PUBLIC-FILE', evidence_type: 'DELIVERY_PHOTO'
-  }, f.driver), error => error.code === 'DRIVE_ACCESS_NOT_RESTRICTED');
+  }, f.driver), error => error.code === 'DRIVE_ACCESS_VALIDATION_FAILED');
   assert.equal(f.db.proofEvidence.size, 0);
 });
 
