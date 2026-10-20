@@ -47,16 +47,27 @@ function createSheetsStore(spreadsheetId, lockFactory) {
     catch (error) { throw new FikishaError("IDEMPOTENCY_RECORD_CORRUPT"); }
   }
 
+  function findUnique(items, predicate, duplicateCode) {
+    var matches = items.filter(predicate);
+    if (matches.length > 1) throw new FikishaError(duplicateCode);
+    return matches.length ? matches[0] : null;
+  }
+
   function getDelivery(id) {
-    return rows("Deliveries", deliveryHeaders).find(function (row) { return row.delivery_id === id; }) || null;
+    return findUnique(rows("Deliveries", deliveryHeaders), function (row) {
+      return row.delivery_id === id;
+    }, "DUPLICATE_DELIVERY_RECORD");
   }
 
   function ensureDelivery(delivery) {
     return withLock(function () {
-      var existing = rows("Deliveries", deliveryHeaders).find(function (row) {
+      var existing = findUnique(rows("Deliveries", deliveryHeaders), function (row) {
         return row.delivery_id === delivery.delivery_id;
-      });
-      if (existing) return { created: false, delivery: existing };
+      }, "DUPLICATE_DELIVERY_RECORD");
+      if (existing) {
+        if (existing.company_id !== delivery.company_id) throw new FikishaError("DELIVERY_ID_CONFLICT");
+        return { created: false, delivery: existing };
+      }
       sheet("Deliveries", deliveryHeaders).appendRow(deliveryHeaders.map(function (h) {
         return delivery[h] === undefined ? "" : delivery[h];
       }));
@@ -132,9 +143,13 @@ function createSheetsStore(spreadsheetId, lockFactory) {
   function saveDelivery(delivery, expectedVersion) {
     return withLock(function () {
       var all = rows("Deliveries", deliveryHeaders);
-      var index = all.findIndex(function (row) { return row.delivery_id === delivery.delivery_id; });
-      if (index < 0) throw new FikishaError("DELIVERY_NOT_FOUND");
-      if (Number(all[index].version) !== Number(expectedVersion)) throw new FikishaError("CONCURRENT_UPDATE");
+      var matches = all.map(function (row, index) { return { row: row, index: index }; })
+        .filter(function (item) { return item.row.delivery_id === delivery.delivery_id; });
+      if (matches.length > 1) throw new FikishaError("DUPLICATE_DELIVERY_RECORD");
+      if (matches.length === 0) throw new FikishaError("DELIVERY_NOT_FOUND");
+      var index = matches[0].index;
+      if (matches[0].row.company_id !== delivery.company_id) throw new FikishaError("TENANT_MISMATCH");
+      if (Number(matches[0].row.version) !== Number(expectedVersion)) throw new FikishaError("CONCURRENT_UPDATE");
       sheet("Deliveries", deliveryHeaders).getRange(index + 2, 1, 1, deliveryHeaders.length).setValues([deliveryHeaders.map(function (h) {
         return delivery[h] === undefined ? "" : delivery[h];
       })]);
