@@ -17,19 +17,19 @@ function fixture() {
   let nowMs = Date.parse('2026-10-20T00:00:00Z');
   const store = {
     runExclusive: work => work(),
-    getOffer: id => db.offers.get(id) || null,
-    getOfferByRequestKey: (company, key) => Array.from(db.offers.values()).find(o => o.company_id === company && o.request_key === key) || null,
-    listOffersForDelivery: id => Array.from(db.offers.values()).filter(o => o.delivery_id === id),
+    getOffer: id => db.offers.has(id) ? Object.assign({}, db.offers.get(id)) : null,
+    getOfferByRequestKey: (company, key) => { const o = Array.from(db.offers.values()).find(o => o.company_id === company && o.request_key === key); return o ? Object.assign({}, o) : null; },
+    listOffersForDelivery: id => Array.from(db.offers.values()).filter(o => o.delivery_id === id).map(o => Object.assign({}, o)),
     createOffer(offer) {
       const prior = db.offers.get(offer.offer_id) || this.getOfferByRequestKey(offer.company_id, offer.request_key);
       if (prior) {
         if (prior.company_id !== offer.company_id || prior.delivery_id !== offer.delivery_id || prior.driver_id !== offer.driver_id || prior.request_key !== offer.request_key) {
           throw Object.assign(new Error('offer conflict'), { code: 'DRIVER_OFFER_ID_CONFLICT' });
         }
-        return { created: false, offer: prior };
+        return { created: false, offer: Object.assign({}, prior) };
       }
       db.offers.set(offer.offer_id, Object.assign({}, offer));
-      return { created: true, offer: db.offers.get(offer.offer_id) };
+      return { created: true, offer: Object.assign({}, db.offers.get(offer.offer_id)) };
     },
     updateOffer(offer, expectedStatus) {
       const prior = db.offers.get(offer.offer_id);
@@ -44,13 +44,13 @@ function fixture() {
       db.outbox.set(n.notification_id, Object.assign({}, n));
       return { created: true, notification: db.outbox.get(n.notification_id) };
     },
-    getNotification: id => db.outbox.get(id) || null,
+    getNotification: id => db.outbox.has(id) ? Object.assign({}, db.outbox.get(id)) : null,
     listDueNotifications(now, limit) {
       return Array.from(db.outbox.values()).filter(n =>
         (n.status === 'PENDING' || n.status === 'RETRY') &&
         (!n.next_attempt_at || n.next_attempt_at <= now) ||
         (n.status === 'PROCESSING' && n.lease_until && n.lease_until <= now)
-      ).slice(0, limit);
+      ).slice(0, limit).map(n => Object.assign({}, n));
     },
     claimNotification(id, now, lease) {
       const n = db.outbox.get(id);
@@ -503,20 +503,27 @@ test('retry recovers a persisted offer when the lifecycle transition initially f
   const pending = prepareDispatch(f, 'offer-partial-create');
   const originalTransition = f.service.transition;
   let failOnce = true;
-  f.service.transition = function (args, actor) {
-    if (args.action === 'OFFER_TO_DRIVER' && failOnce) {
-      failOnce = false;
-      throw Object.assign(new Error('simulated interruption'), { code: 'SIMULATED_TRANSITION_INTERRUPTION' });
+  const interruptedService = {
+    get: f.service.get,
+    transition(args, actor) {
+      if (args.action === 'OFFER_TO_DRIVER' && failOnce) {
+        failOnce = false;
+        throw Object.assign(new Error('simulated interruption'), { code: 'SIMULATED_TRANSITION_INTERRUPTION' });
+      }
+      return originalTransition(args, actor);
     }
-    return originalTransition(args, actor);
   };
+  const interruptedDispatch = c.createDispatchService({
+    store: f.store, deliveryService: interruptedService, actorResolver: f.actorResolver,
+    clock: () => new Date(f.currentTime()), idFactory: () => 'INTERRUPTED-OFFER', offerTtlMs: 120000
+  });
   const request = { delivery_id: pending.delivery_id, driver_id: 'driver', idempotency_key: 'offer-partial' };
-  assert.throws(() => f.dispatchService.createOffer(request, f.dispatcher),
+  assert.throws(() => interruptedDispatch.createOffer(request, f.dispatcher),
     error => error.code === 'SIMULATED_TRANSITION_INTERRUPTION');
   assert.equal(f.db.offers.size, 1);
   assert.equal(f.db.deliveries.get(pending.delivery_id).status, 'DISPATCH_PENDING');
 
-  const recovered = f.dispatchService.createOffer(request, f.dispatcher);
+  const recovered = interruptedDispatch.createOffer(request, f.dispatcher);
   assert.equal(recovered.status, 'OFFERED');
   assert.equal(f.db.deliveries.get(pending.delivery_id).status, 'OFFER_SENT');
   assert.equal(f.db.offers.size, 1);
