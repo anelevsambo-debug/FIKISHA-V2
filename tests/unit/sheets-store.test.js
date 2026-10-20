@@ -186,7 +186,7 @@ test('lock acquisition timeout fails closed, does not run the write, and emits a
   );
   assert.equal(f.sheets.get('Idempotency')._data.length, 1);
   assert.equal(releaseCalls, 0);
-  assert.deepEqual(logs, [{
+  assert.deepEqual(JSON.parse(JSON.stringify(logs)), [{
     component: 'sheets_store',
     event: 'lock_acquisition_failed',
     code: 'LOCK_ACQUISITION_TIMEOUT'
