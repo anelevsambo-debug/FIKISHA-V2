@@ -4,18 +4,20 @@
 
 | Gate | Status | Evidence / blocker |
 |---|---|---|
-| Delivery service | IMPLEMENTED | src/deliveries/service.js; integration/runtime tests pending |
-| Unit tests | IMPLEMENTED | tests/unit; inspect actual Actions result |
-| Sheets adapter | IMPLEMENTED | src/google/sheetsStore.js; not live-tested |
-| Company provisioning | NOT STARTED | No actual provisioning pipeline |
-| AppSheet apps | NOT STARTED | No apps created or tested |
-| Live tenant isolation | BLOCKED | Requires separate real accounts and workbooks |
-| Meta outbound adapter | IMPLEMENTED | No credentials or live API test |
-| WhatsApp inbound signature verification | NOT STARTED | doPost remains a placeholder |
-| Consent and opt-out enforcement | NOT STARTED | Not enforced end to end |
-| Proof-of-delivery workflow | BLOCKED | Verification enrollment workflow incomplete |
-| Backup and restore | NOT STARTED | No recovery exercise |
-| Production deployment | NOT STARTED | No deployment performed |
-| Privacy/legal review | NOT STARTED | Current legal-source review pending |
+| Delivery service | IMPLEMENTED, NOT VERIFIED | Unit tests cover create/transition logic; no authenticated operational entrypoint or live Apps Script test. |
+| Trusted actor resolver | IMPLEMENTED, NOT VERIFIED | Resolver rejects caller-created actors and checks active membership, but no real identity provider or membership-store adapter is connected. |
+| Unit tests | VERIFIED IN TEST ENVIRONMENT | GitHub Actions run #109: 38 passed, 0 failed, 0 skipped on Node.js 24; tests use fake platform interfaces. |
+| Sheets adapter | IMPLEMENTED, NOT VERIFIED | Fake Sheets tests cover reservation and duplicate protection; no live workbook or real concurrent lock test. |
+| Create/transition recovery | IMPLEMENTED, NOT VERIFIED | Simulated partial-write tests pass; actual Apps Script/Google Sheets behavior remains unverified. |
+| Company provisioning | NOT STARTED | No actual end-to-end provisioning pipeline verified. |
+| AppSheet apps | NOT STARTED | No apps created or tested. |
+| Live tenant isolation | BLOCKED | Requires separate real accounts and workbooks. |
+| Meta outbound adapter | IMPLEMENTED, NOT VERIFIED | Fake HTTP client only; no credentials or live API test. |
+| WhatsApp inbound signature verification | NOT STARTED | doPost remains a placeholder and rejects processing. |
+| Consent and opt-out enforcement | NOT STARTED | Not enforced end to end. |
+| Proof-of-delivery workflow | BLOCKED | Verification enrollment workflow incomplete. |
+| Backup and restore | NOT STARTED | No recovery exercise. |
+| Production deployment | NOT STARTED | No deployment performed. |
+| Privacy/legal review | NOT STARTED | Jurisdiction-specific review and owner sign-off pending. |
 
 No gate is LIVE-VERIFIED. Do not deploy for real customer operations until security, persistence, Google configuration and live integration gates pass.
