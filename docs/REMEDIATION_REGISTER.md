@@ -274,3 +274,12 @@ No real Google Workspace, Sheets/Drive resources, Apps Script trigger, WhatsApp 
 ### Closure gate
 
 Run CI on the exact PR head and inspect scenario-specific results. Keep the PR draft and unmerged until code review and a separate owner-authorized synthetic Google runtime test are complete. Do not claim live delivery, notification delivery, or production readiness from mock evidence.
+
+
+### CI evidence — lifecycle/outbox candidate
+
+- **Tested code HEAD:** `dc32438c25c2e3ff62d7fde6f17311f6cac79e38`; scenario suite passed in GitHub Actions run #266: 113 passed, 0 failed, 0 skipped; legacy-term scan passed.
+- Added final scope/documentation update on `acad7f8656d5c506a5b5d597ce241daf8f1109d4`; GitHub Actions run #270 passed: 116 passed, 0 failed, 0 skipped; legacy-term scan passed.
+- Scenario evidence covers invalid creation input; same-company active driver eligibility; complete synthetic journey to `IN_TRANSIT`; invalid state transitions; cancellation limited to `RECEIVED`; decline and expiry returning to dispatch pending; reoffer after decline/expiry/failed attempt; competing driver acceptance; repeated acceptance and offer request; interrupted offer creation and interrupted assignment-status write recovery; outbox retry exhaustion; expired processing lease recovery; provider acceptance versus confirmed delivery; duplicate delivery confirmation; and separate SYSTEM-principal identity validation.
+- These are deterministic Node tests with synthetic records and fake persistence/provider adapters. No actual Google runtime or notification provider was exercised.
+- SYSTEM-only expiry transitions require an injected `getAuthenticatedSystemPrincipal` callback. No live scheduler identity provider is configured. No proof-of-delivery work was added.
