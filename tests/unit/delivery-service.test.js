@@ -143,6 +143,7 @@ function fixture() {
   });
   return {
     db,
+    store,
     actorResolver,
     service,
     dispatchService,
