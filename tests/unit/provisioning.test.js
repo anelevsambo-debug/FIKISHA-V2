@@ -98,8 +98,10 @@ function fixture(options = {}) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/companies/provisioning.js'), 'utf8'), context);
 
   let saveJobCalls = 0;
+  let exclusiveCalls = 0;
   const failSaveCalls = new Set(options.failSaveCalls || []);
   const platform = {
+    runExclusive(work) { exclusiveCalls += 1; return work(); },
     company: options.company || { company_id: 'CO-A', name: 'Company A', status: 'ACTIVE' },
     job: options.job || null,
     resources: null,
@@ -147,7 +149,7 @@ function fixture(options = {}) {
       if (!spreadsheet || company.company_id !== 'CO-A') throw new Error('unexpected initializer arguments');
     }
   });
-  return { context, platform, provisioner, root, folders, files, workbooks, template, workbook, admin, companyAdmin };
+  return { context, platform, provisioner, root, folders, files, workbooks, template, workbook, admin, companyAdmin, exclusiveCalls: () => exclusiveCalls };
 }
 
 const folderMarker = 'FIKISHA-V2|company_id=CO-A|resource=operations-folder';
@@ -164,6 +166,7 @@ test('provisioner creates marked resources and persists completion state', () =>
   assert.equal(f.files.get('file-1').getDescription(), workbookMarker);
   assert.equal(f.platform.job.status, 'NEEDS_OWNER_ACTION');
   assert.equal(f.platform.resources.workbook_id, 'file-1');
+  assert.equal(f.exclusiveCalls(), 1);
 });
 
 test('provisioner reuses uniquely marked resources after a lost job reference', () => {
