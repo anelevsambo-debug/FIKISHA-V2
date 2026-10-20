@@ -9,7 +9,9 @@ const headers = {
   DeliveryEvents: ['event_id', 'company_id', 'delivery_id', 'event_type', 'actor_id', 'from_status', 'to_status', 'reason', 'proof_id', 'created_at'],
   Idempotency: ['key', 'result_json', 'created_at'],
   ProofOfDelivery: ['proof_id', 'delivery_id', 'company_id', 'verified', 'created_at'],
-  Drivers: ['driver_id', 'company_id', 'status']
+  Drivers: ['driver_id', 'company_id', 'status'],
+  DriverOffers: ['offer_id', 'company_id', 'delivery_id', 'driver_id', 'status', 'expires_at', 'created_at', 'responded_at', 'response_actor_id', 'request_key', 'attempt_number'],
+  NotificationOutbox: ['notification_id', 'company_id', 'delivery_id', 'event_id', 'recipient_actor_id', 'channel', 'template_key', 'payload_json', 'status', 'attempt_count', 'next_attempt_at', 'lease_until', 'last_error_code', 'provider_message_id', 'created_at', 'updated_at']
 };
 
 function makeSheet(name, firstRow) {
