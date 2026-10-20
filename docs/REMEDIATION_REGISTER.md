@@ -153,3 +153,45 @@ Tests use Node.js VM and fake registry/store adapters. They prove the authorizat
 ### P0-01 closure decision
 
 **P0-01 remains BLOCKED.** No supported trusted identity provider is currently wired to an authenticated operational entrypoint, and no authorized non-production Google identity test was available. Do not enable `doPost`, do not use request-supplied identity fields as authority, and do not mark the application production-secure. No P0-02 implementation was started.
+
+## P0-02 continuation — 2026-10-20 — Tenant isolation and Google resource binding
+
+**Status: PARTIALLY VERIFIED for logical authorization; live Google resource isolation UNKNOWN / NOT VERIFIED.**
+
+### Findings confirmed from repository code
+
+- `src/platform/platformStore.js` is the server-controlled Companies / CompanyMembers / PlatformAdmins / ProvisioningJobs registry adapter. It validates headers and rejects duplicate company, membership, administrator and job records. It does not itself establish caller identity.
+- `src/companies/provisioning.js` provisions resources using company-specific deterministic names and description markers, checks for duplicate names and wrong markers, and uses persisted job IDs to resume retries. It previously accepted any non-`SUSPENDED` status and did not validate a returned company's identity or provisioning job's company binding.
+- `src/google/sheetsStore.js` used to return the first delivery row with a matching ID. Duplicate IDs could therefore make tenant resolution ambiguous.
+- `src/core/tenants.js` previously exposed only a small context helper and row-company comparison; there was no complete helper that derived workbook and folder resources from the authorized company registry record.
+- There are no separate operational methods for direct delivery deletion or evidence attachment in the current delivery service. Existing protected operations are create, transition and get. Evidence is referenced through company-bound proof records during transition checks.
+- No real Google workbook, Drive folder, AppSheet app, sharing ACL or test account was available. Logical authorization cannot establish direct Google-resource ACL isolation.
+
+### Changes committed
+
+- `dd7adc49cb857e58fd38d0196e819ccaf50bae9c` — Sheets store fails closed on duplicate delivery IDs, rejects an ID bound to another company, and checks company binding before updating a delivery.
+- `bf260e4316bb6e4215c6a19f5d0161a358636362` — added tests for duplicate cross-tenant IDs, foreign-company ID reuse and cross-tenant save attempts.
+- `b00402d892c565102409a46b0d904c4f6838698a` — provisioning requires exact company registry identity and ACTIVE status, and rejects a provisioning job associated with another company.
+- `43c7cdc4035a60e25dd91f3b36cada6bc7abb324` and `36fbe8485c00de4b0a488d4985e68bf2918cd8f8` — introduced `resolveTenantResources`, which authorizes a resolver-branded actor, reads resource IDs only from the Companies registry, validates folder/workbook markers and CompanyConfig company/schema binding, and fails closed on registry/resource lookup failures.
+- `584cd0c919a3267c36a2f26c82f4a65746a3901f` — added synthetic Company A / Company B resource-binding tests.
+- `39ca70f370f09c17f8a3b177dd146b0ea01239c5` and `c9fc54606c6e0f4bc5562092dbb4abd220bd9e26` — added provisioning tests for disabled companies, mismatched registry identity, foreign workbook markers and mismatched job ownership.
+- `fda5758cdc17b30a584905828bdb0eca829a4e78` — added delivery-service tests proving Company B cannot read/transition Company A delivery records and foreign-company proof does not authorize completion.
+- `c022662f460e53ceb5ced7dbb4b2472325e17545` — documented tenant binding design and live ACL evidence boundary.
+
+### Required adversarial evidence
+
+| Case | Repository test evidence | Live Google evidence |
+|---|---|---|
+| Company A resolves only its own registry-bound workbook/folder | Added synthetic fixture test | UNKNOWN |
+| Company A cannot read or transition Company B delivery | Existing cross-company test plus new cross-tenant transition test | UNKNOWN |
+| Changing company ID does not change actor authority | Added trusted-actor company mismatch test | UNKNOWN |
+| Forged workbook / folder IDs or foreign resource markers | Added marker and registry-binding tests; resolver does not accept client IDs | UNKNOWN |
+| Unknown or disabled company | Added resolver/provisioner tests | UNKNOWN |
+| Retry after partial provisioning avoids duplicates | Existing lost-job-reference and marked-resource reuse tests retained | UNKNOWN |
+| Schema mismatch is rejected diagnostically | Existing schema-v2 tests plus CompanyConfig binding/version tests | UNKNOWN |
+| Missing/invalid registry bindings do not fall back | Added missing-ID, registry-failure and foreign-binding tests | UNKNOWN |
+| Direct Drive/Sheets access blocked by ACLs | Not testable with current access | UNKNOWN |
+
+### Closure decision
+
+P0-02 is **not closed**. Logical code-level isolation has been strengthened, but this task's live Google resource access-control requirement cannot be proven without an authorized non-production Google workspace and separate Company A / Company B accounts. Resource description markers do not replace ACLs. No real customer records or production permissions were changed. P0-03 and other remediation IDs were not started.
