@@ -178,7 +178,7 @@ test('Company B cannot transition or mutate Company A delivery through a foreign
     () => f.service.get(delivery.delivery_id, f.otherActor),
     error => error.code === 'TENANT_ACCESS_DENIED'
   );
-  assert.deepEqual(f.db.deliveries.get(delivery.delivery_id), before);
+  assert.equal(JSON.stringify(f.db.deliveries.get(delivery.delivery_id)), JSON.stringify(before));
   assert.equal(f.db.events.length, eventCount);
 });
 
