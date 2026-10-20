@@ -82,7 +82,7 @@ function createWhatsAppIntegration(deps) {
       // implementation without atomic uniqueness is not sufficient for concurrent deliveries.
       var result = store.recordWebhookEventUnique(key, event);
       if (!result || !["CREATED", "DUPLICATE"].includes(result.status)) fail("WEBHOOK_EVENT_PERSISTENCE_FAILED");
-      if (result.status === "CREATED" && event.kind === "status") applyStatusEvent(event);
+      if (event.kind === "status") applyStatusEvent(event);
       results.push({ event_key: key, status: result.status });
     });
     safeLog("webhook_accepted", "WEBHOOK_EVENTS_RECORDED");
