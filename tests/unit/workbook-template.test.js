@@ -70,6 +70,7 @@ test('empty company workbook initializes the required tabs and company identity'
   const spreadsheet = makeSpreadsheet();
   const result = c.initializeCompanyWorkbook(spreadsheet, { company_id: 'company-a' });
 
+  assert.equal(result.schema_version, '2');
   assert.equal(result.company_id, 'company-a');
   assert.equal(result.spreadsheet_id, 'test-spreadsheet-id');
   assert.deepEqual(Array.from(result.sheets), [
@@ -79,7 +80,7 @@ test('empty company workbook initializes the required tabs and company identity'
     ['delivery_id', 'company_id', 'status']
   ]);
   assert.deepEqual(spreadsheet.getSheetByName('CompanyConfig').getRange(1, 1, 3, 2).getValues(), [
-    ['key', 'value'], ['company_id', 'company-a'], ['schema_version', '1']
+    ['key', 'value'], ['company_id', 'company-a'], ['schema_version', '2']
   ]);
 });
 
@@ -88,7 +89,7 @@ test('re-running initialization preserves existing delivery data', () => {
   const spreadsheet = makeSpreadsheet();
   c.initializeCompanyWorkbook(spreadsheet, { company_id: 'company-a' });
   const deliveries = spreadsheet.getSheetByName('Deliveries');
-  const row = Array(19).fill('');
+  const row = Array(20).fill('');
   row[0] = 'FK-1';
   row[1] = 'company-a';
   row[2] = 'RECEIVED';
@@ -117,6 +118,20 @@ test('incompatible existing schema fails closed without overwriting its data', (
     ['wrong_id', 'company_id', 'status'],
     ['keep-me', 'company-a', 'RECEIVED']
   ]);
+});
+
+
+test('existing workbook rejects an old schema version instead of silently upgrading it', () => {
+  const c = loadInitializer();
+  const spreadsheet = makeSpreadsheet();
+  c.initializeCompanyWorkbook(spreadsheet, { company_id: 'company-a' });
+  const config = spreadsheet.getSheetByName('CompanyConfig');
+  config.getRange(3, 2, 1, 1).setValues([['1']]);
+
+  assert.throws(
+    () => c.initializeCompanyWorkbook(spreadsheet, { company_id: 'company-a' }),
+    error => error.code === 'COMPANY_SCHEMA_VERSION_MISMATCH'
+  );
 });
 
 test('existing workbook cannot be rebound to a different company', () => {

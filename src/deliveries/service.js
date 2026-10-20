@@ -6,7 +6,8 @@ function createDeliveryService(deps) {
 
   var store = deps.store;
 
-  if (typeof store.reserveIdempotency !== "function" ||
+  if (typeof store.getIdempotency !== "function" ||
+      typeof store.reserveIdempotency !== "function" ||
       typeof store.completeIdempotency !== "function" ||
       typeof store.ensureDelivery !== "function" ||
       typeof store.ensureEvent !== "function") {
@@ -52,6 +53,7 @@ function createDeliveryService(deps) {
     var completedAt = deps.clock().toISOString();
     store.completeIdempotency(key, {
       state: "COMPLETED",
+      operation_type: "CREATE",
       operation_id: record.operation_id || delivery.delivery_id,
       result: delivery,
       created_at: record.created_at || delivery.created_at,
@@ -71,9 +73,24 @@ function createDeliveryService(deps) {
     if (!isNonEmptyString(idempotencyKey) || idempotencyKey.length > 128) throw new FikishaError("IDEMPOTENCY_KEY_REQUIRED");
 
     var key = actor.company_id + ":" + idempotencyKey;
+    var prior = store.getIdempotency(key);
+    if (prior) {
+      var priorDelivery = prior.delivery || prior.result;
+      if (priorDelivery && priorDelivery.created_by && priorDelivery.created_by !== actor.actor_id) throw new FikishaError("IDEMPOTENCY_KEY_REUSED");
+      if (!prior.state && prior.result) return prior.result;
+      if (prior.state === "COMPLETED") {
+        if (prior.operation_type !== "CREATE" || !prior.result) throw new FikishaError("IDEMPOTENCY_KEY_REUSED");
+        return prior.result;
+      }
+      if (prior.state !== "IN_PROGRESS" || (prior.operation_type && prior.operation_type !== "CREATE")) {
+        throw new FikishaError("IDEMPOTENCY_STATE_INVALID");
+      }
+      return resumeCreate(key, prior);
+    }
     var now = deps.clock().toISOString();
+    var deliveryId = deps.idFactory();
     var delivery = {
-      delivery_id: deps.idFactory(),
+      delivery_id: deliveryId,
       company_id: actor.company_id,
       status: "RECEIVED",
       sender_name: input.sender_name.trim(),
@@ -87,7 +104,8 @@ function createDeliveryService(deps) {
       created_at: now,
       updated_at: now,
       created_by: actor.actor_id,
-      version: 1
+      version: 1,
+      last_operation_id: deliveryId
     };
     var event = {
       event_id: deps.idFactory(),
@@ -103,6 +121,7 @@ function createDeliveryService(deps) {
     };
     var candidate = {
       state: "IN_PROGRESS",
+      operation_type: "CREATE",
       operation_id: delivery.delivery_id,
       delivery: delivery,
       event: event,
@@ -113,25 +132,94 @@ function createDeliveryService(deps) {
     var reservation = store.reserveIdempotency(key, candidate);
     if (!reservation || !reservation.record) throw new FikishaError("IDEMPOTENCY_RESERVATION_FAILED");
     var record = reservation.record;
+    var reservedDelivery = record.delivery || record.result;
+    if (reservedDelivery && reservedDelivery.created_by && reservedDelivery.created_by !== actor.actor_id) throw new FikishaError("IDEMPOTENCY_KEY_REUSED");
 
     // Read legacy completed records written by the previous adapter/service shape.
     if (!record.state && record.result) return record.result;
     if (record.state === "COMPLETED") {
-      if (!record.result) throw new FikishaError("IDEMPOTENCY_RECORD_CORRUPT");
+      if (record.operation_type !== "CREATE" || !record.result) throw new FikishaError("IDEMPOTENCY_KEY_REUSED");
       return record.result;
     }
-    if (record.state !== "IN_PROGRESS") throw new FikishaError("IDEMPOTENCY_STATE_INVALID");
+    if (record.state !== "IN_PROGRESS" || record.operation_type !== "CREATE") throw new FikishaError("IDEMPOTENCY_STATE_INVALID");
 
     return resumeCreate(key, record);
+  }
+
+  function transitionAlreadyApplied(current, record) {
+    return current &&
+      current.last_operation_id === record.operation_id &&
+      Number(current.version) === Number(record.delivery.version) &&
+      current.status === record.delivery.status;
+  }
+
+  function assertSameTransitionRequest(record, args, actor) {
+    if (!record || record.operation_type !== "TRANSITION" ||
+        record.delivery_id !== args.delivery_id ||
+        !record.event ||
+        record.event.event_type !== args.action ||
+        record.event.actor_id !== actor.actor_id ||
+        (record.event.reason || "") !== (args.reason || "") ||
+        (record.event.proof_id || "") !== (args.proof_id || "") ||
+        (args.action === "ACCEPT_OFFER" && record.delivery.driver_id !== args.driver_id)) {
+      throw new FikishaError("IDEMPOTENCY_KEY_REUSED");
+    }
+  }
+
+  function resumeTransition(key, record) {
+    var current = store.getDelivery(record.delivery_id);
+    if (!current) throw new FikishaError("DELIVERY_NOT_FOUND");
+
+    if (!transitionAlreadyApplied(current, record)) {
+      if (Number(current.version) !== Number(record.expected_version) || current.status !== record.from_status) {
+        throw new FikishaError("TRANSITION_RECOVERY_CONFLICT");
+      }
+      try {
+        store.saveDelivery(record.delivery, record.expected_version);
+      } catch (error) {
+        var latest = store.getDelivery(record.delivery_id);
+        if (!transitionAlreadyApplied(latest, record)) throw error;
+      }
+      current = store.getDelivery(record.delivery_id);
+      if (!transitionAlreadyApplied(current, record)) throw new FikishaError("TRANSITION_RECOVERY_CONFLICT");
+    }
+
+    store.ensureEvent(record.event);
+    var completedAt = deps.clock().toISOString();
+    store.completeIdempotency(key, {
+      state: "COMPLETED",
+      operation_type: "TRANSITION",
+      operation_id: record.operation_id,
+      result: record.delivery,
+      created_at: record.created_at,
+      updated_at: completedAt
+    });
+    return record.delivery;
   }
 
   function transition(args, actor) {
     if (!args || !isNonEmptyString(args.delivery_id) || !isNonEmptyString(args.action)) {
       throw new FikishaError("INVALID_TRANSITION_REQUEST");
     }
+    if (!isNonEmptyString(args.idempotency_key) || args.idempotency_key.length > 128) {
+      throw new FikishaError("IDEMPOTENCY_KEY_REQUIRED");
+    }
+
     var current = store.getDelivery(args.delivery_id);
     if (!current) throw new FikishaError("DELIVERY_NOT_FOUND");
     actorCheck(actor, current.company_id);
+
+    var key = actor.company_id + ":TRANSITION:" + args.idempotency_key;
+    var prior = store.getIdempotency(key);
+    if (prior) {
+      assertSameTransitionRequest(prior, args, actor);
+      if (prior.state === "COMPLETED") {
+        if (!prior.result) throw new FikishaError("IDEMPOTENCY_RECORD_CORRUPT");
+        return prior.result;
+      }
+      if (prior.state !== "IN_PROGRESS") throw new FikishaError("IDEMPOTENCY_STATE_INVALID");
+      return resumeTransition(key, prior);
+    }
 
     var decision = decideTransition(current.status, args.action, actor.role);
     if (!decision.ok) throw new FikishaError(decision.reason_code || "INVALID_TRANSITION");
@@ -148,10 +236,12 @@ function createDeliveryService(deps) {
     }
 
     var now = deps.clock().toISOString();
+    var operationId = deps.idFactory();
     var updated = Object.assign({}, current, {
       status: decision.to,
       updated_at: now,
-      version: Number(current.version || 0) + 1
+      version: Number(current.version || 0) + 1,
+      last_operation_id: operationId
     });
     if (decision.to === "ASSIGNED") updated.driver_id = args.driver_id;
     if (decision.to === "DELIVERED_VERIFIED") {
@@ -160,8 +250,7 @@ function createDeliveryService(deps) {
     }
     if (decision.to === "DELIVERY_ATTEMPTED") updated.failure_reason = args.reason.trim();
 
-    store.saveDelivery(updated, current.version);
-    store.appendEvent({
+    var event = {
       event_id: deps.idFactory(),
       company_id: current.company_id,
       delivery_id: current.delivery_id,
@@ -172,8 +261,29 @@ function createDeliveryService(deps) {
       reason: args.reason || "",
       proof_id: args.proof_id || "",
       created_at: now
-    });
-    return updated;
+    };
+    var candidate = {
+      state: "IN_PROGRESS",
+      operation_type: "TRANSITION",
+      operation_id: operationId,
+      delivery_id: current.delivery_id,
+      expected_version: Number(current.version || 0),
+      from_status: current.status,
+      delivery: updated,
+      event: event,
+      created_at: now,
+      updated_at: now
+    };
+    var reservation = store.reserveIdempotency(key, candidate);
+    if (!reservation || !reservation.record) throw new FikishaError("IDEMPOTENCY_RESERVATION_FAILED");
+    var record = reservation.record;
+    assertSameTransitionRequest(record, args, actor);
+    if (record.state === "COMPLETED") {
+      if (!record.result) throw new FikishaError("IDEMPOTENCY_RECORD_CORRUPT");
+      return record.result;
+    }
+    if (record.state !== "IN_PROGRESS") throw new FikishaError("IDEMPOTENCY_STATE_INVALID");
+    return resumeTransition(key, record);
   }
 
   function get(id, actor) {

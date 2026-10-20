@@ -12,9 +12,10 @@ function fixture() {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../../src/deliveries/service.js'), 'utf8'), context);
 
   const db = { deliveries: new Map(), events: [], idempotency: new Map() };
-  let failNextEvent = true;
+  let failNextEvent = false;
   const store = {
     getDelivery: id => db.deliveries.get(id) || null,
+    getIdempotency: key => db.idempotency.get(key) || null,
     reserveIdempotency(key, candidate) {
       if (db.idempotency.has(key)) return { created: false, record: db.idempotency.get(key) };
       db.idempotency.set(key, candidate);
@@ -29,6 +30,11 @@ function fixture() {
       if (existing) return { created: false, delivery: existing };
       db.deliveries.set(delivery.delivery_id, delivery);
       return { created: true, delivery };
+    },
+    saveDelivery(delivery, expectedVersion) {
+      const existing = db.deliveries.get(delivery.delivery_id);
+      if (!existing || Number(existing.version) !== Number(expectedVersion)) throw Object.assign(new Error('conflict'), { code: 'CONCURRENT_UPDATE' });
+      db.deliveries.set(delivery.delivery_id, delivery);
     },
     ensureEvent(event) {
       if (failNextEvent) {
@@ -72,6 +78,7 @@ function fixture() {
     db,
     service,
     actor,
+    failNextEventOnce() { failNextEvent = true; },
     input: {
       sender_name: 'Sender',
       sender_phone: '+26770000001',
@@ -84,8 +91,34 @@ function fixture() {
   };
 }
 
+
+test('retry completes a transition after the delivery write succeeds but the event write fails', () => {
+  const f = fixture();
+  const delivery = f.service.create(f.input, f.actor, 'transition-recovery-create');
+  f.db.deliveries.set(delivery.delivery_id, Object.assign({}, delivery, { status: 'READY_FOR_QUOTE', version: 1 }));
+  f.failNextEventOnce();
+  const request = { delivery_id: delivery.delivery_id, action: 'ISSUE_QUOTE', idempotency_key: 'transition-recovery-1' };
+
+  assert.throws(
+    () => f.service.transition(request, f.actor),
+    error => error.code === 'SIMULATED_EVENT_WRITE_FAILURE'
+  );
+  assert.equal(f.db.deliveries.get(delivery.delivery_id).status, 'QUOTE_ISSUED');
+  assert.equal(f.db.deliveries.get(delivery.delivery_id).version, 2);
+  assert.equal(f.db.events.length, 1);
+  assert.equal(f.db.idempotency.get('COMPANY-A:TRANSITION:transition-recovery-1').state, 'IN_PROGRESS');
+
+  const recovered = f.service.transition(request, f.actor);
+
+  assert.equal(recovered.status, 'QUOTE_ISSUED');
+  assert.equal(f.db.deliveries.get(delivery.delivery_id).version, 2);
+  assert.equal(f.db.events.length, 2);
+  assert.equal(f.db.idempotency.get('COMPANY-A:TRANSITION:transition-recovery-1').state, 'COMPLETED');
+});
+
 test('retry resumes a reserved create after event write fails without duplicating the delivery', () => {
   const f = fixture();
+  f.failNextEventOnce();
   assert.throws(
     () => f.service.create(f.input, f.actor, 'retry-key-1'),
     error => error.code === 'SIMULATED_EVENT_WRITE_FAILURE'

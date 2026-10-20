@@ -38,7 +38,7 @@ function createSheetsStore(spreadsheetId, lockFactory) {
     });
   }
 
-  var deliveryHeaders = ["delivery_id", "company_id", "status", "sender_name", "sender_phone", "recipient_name", "recipient_phone", "pickup_text", "dropoff_text", "instructions", "consent_status", "created_at", "updated_at", "created_by", "version", "driver_id", "proof_id", "delivered_at", "failure_reason"];
+  var deliveryHeaders = ["delivery_id", "company_id", "status", "sender_name", "sender_phone", "recipient_name", "recipient_phone", "pickup_text", "dropoff_text", "instructions", "consent_status", "created_at", "updated_at", "created_by", "version", "last_operation_id", "driver_id", "proof_id", "delivered_at", "failure_reason"];
   var eventHeaders = ["event_id", "company_id", "delivery_id", "event_type", "actor_id", "from_status", "to_status", "reason", "proof_id", "created_at"];
   var idempotencyHeaders = ["key", "result_json", "created_at"];
 

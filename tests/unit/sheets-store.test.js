@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 
 const headers = {
-  Deliveries: ['delivery_id', 'company_id', 'status', 'sender_name', 'sender_phone', 'recipient_name', 'recipient_phone', 'pickup_text', 'dropoff_text', 'instructions', 'consent_status', 'created_at', 'updated_at', 'created_by', 'version', 'driver_id', 'proof_id', 'delivered_at', 'failure_reason'],
+  Deliveries: ['delivery_id', 'company_id', 'status', 'sender_name', 'sender_phone', 'recipient_name', 'recipient_phone', 'pickup_text', 'dropoff_text', 'instructions', 'consent_status', 'created_at', 'updated_at', 'created_by', 'version', 'last_operation_id', 'driver_id', 'proof_id', 'delivered_at', 'failure_reason'],
   DeliveryEvents: ['event_id', 'company_id', 'delivery_id', 'event_type', 'actor_id', 'from_status', 'to_status', 'reason', 'proof_id', 'created_at'],
   Idempotency: ['key', 'result_json', 'created_at'],
   ProofOfDelivery: ['proof_id', 'delivery_id', 'company_id', 'verified', 'created_at'],
@@ -91,7 +91,7 @@ test('delivery insert is idempotent by delivery ID', () => {
   const f = fixture();
   const delivery = {
     delivery_id: 'D-1', company_id: 'CO-A', status: 'RECEIVED',
-    created_at: '2026-10-20T00:00:00.000Z', created_by: 'admin-a', version: 1
+    created_at: '2026-10-20T00:00:00.000Z', created_by: 'admin-a', version: 1, last_operation_id: 'OP-1'
   };
 
   assert.equal(f.store.ensureDelivery(delivery).created, true);

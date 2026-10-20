@@ -118,8 +118,37 @@ test('driver cannot complete delivery without verified proof', () => {
   const delivery = f.service.create(f.input, f.actor, 'req-1');
   f.db.deliveries.set(delivery.delivery_id, Object.assign({}, delivery, { status: 'DELIVERY_VERIFICATION_PENDING' }));
   assert.throws(
-    () => f.service.transition({ delivery_id: delivery.delivery_id, action: 'VERIFY_OTP', proof_id: 'proof-x' }, f.driver),
+    () => f.service.transition({ delivery_id: delivery.delivery_id, action: 'VERIFY_OTP', idempotency_key: 'verify-1', proof_id: 'proof-x' }, f.driver),
     error => error.code === 'VERIFIED_PROOF_REQUIRED'
+  );
+});
+
+
+test('transition retries return the original result without duplicate audit events', () => {
+  const f = fixture();
+  const delivery = f.service.create(f.input, f.actor, 'create-transition');
+  f.db.deliveries.set(delivery.delivery_id, Object.assign({}, delivery, { status: 'READY_FOR_QUOTE', version: 1 }));
+  const request = { delivery_id: delivery.delivery_id, action: 'ISSUE_QUOTE', idempotency_key: 'transition-1' };
+
+  const first = f.service.transition(request, f.actor);
+  const retry = f.service.transition(request, f.actor);
+
+  assert.equal(first.status, 'QUOTE_ISSUED');
+  assert.equal(first.version, 2);
+  assert.equal(retry.status, 'QUOTE_ISSUED');
+  assert.equal(retry.version, 2);
+  assert.equal(f.db.events.length, 2);
+  assert.equal(f.db.keys.get('CO-A:TRANSITION:transition-1').state, 'COMPLETED');
+});
+
+test('transition idempotency key cannot be reused for a different action', () => {
+  const f = fixture();
+  const delivery = f.service.create(f.input, f.actor, 'create-transition');
+  f.db.deliveries.set(delivery.delivery_id, Object.assign({}, delivery, { status: 'READY_FOR_QUOTE', version: 1 }));
+  f.service.transition({ delivery_id: delivery.delivery_id, action: 'ISSUE_QUOTE', idempotency_key: 'transition-1' }, f.actor);
+  assert.throws(
+    () => f.service.transition({ delivery_id: delivery.delivery_id, action: 'CANCEL', idempotency_key: 'transition-1' }, f.actor),
+    error => error.code === 'IDEMPOTENCY_KEY_REUSED'
   );
 });
 
